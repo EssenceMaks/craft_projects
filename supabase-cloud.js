@@ -14,6 +14,7 @@ const SC = {
   currentLocalSave:  null,  // loaded local save name
   channel:         null,    // own live broadcast channel
   watchChannel:    null,    // channel for watching another user
+  globalChannel:   null,    // shared presence/announcement channel
   liveMode:        false,   // WE are broadcasting
   watchMode:       false,   // watching/co-editing someone else
   watchReadOnly:   false,   // true = watch only, no edits sent
@@ -31,6 +32,8 @@ const SC = {
   cursorThrottle:  null,
   broadcastTimer:  null,    // debounce for canvas broadcast
   loginSelected:   null,
+  modalRefreshTimer: null,  // auto-refresh while cloud modal is open
+  _switchingUser:  false,
 };
 let _origRenderCanvas = null;
 
@@ -132,7 +135,13 @@ window.initCloud = function() {
 function restoreSession() {
   const saved = localStorage.getItem('cg_user');
   if (saved) {
-    try { SC.user = JSON.parse(saved); renderUserBadge(); return; } catch(e) {}
+    try {
+      SC.user = JSON.parse(saved);
+      renderUserBadge();
+      // Join global presence channel now that we have a user
+      setTimeout(joinGlobalChannel, 800);
+      return;
+    } catch(e) {}
   }
   showLoginModal();
 }
@@ -199,6 +208,8 @@ window.doLogin = function() {
   document.querySelectorAll('.login-user-card').forEach(c => c.classList.remove('sel'));
   cloudToast((isSwitching ? 'Смена аккаунта: ' : 'Привет, ') + u.name + '!', 'success');
   if (!isSwitching) restoreLocalDraft();
+  // Join global presence channel after login
+  setTimeout(joinGlobalChannel, 600);
 };
 
 window.logoutUser = function() {
@@ -513,10 +524,21 @@ window.showCloudModal = async function() {
   if (!m) return;
   m.classList.remove('hidden');
   await refreshCloudModal();
+  // Auto-refresh live list every 20s while modal is open
+  if (SC.modalRefreshTimer) clearInterval(SC.modalRefreshTimer);
+  SC.modalRefreshTimer = setInterval(() => {
+    if (!document.getElementById('cloud-modal')?.classList.contains('hidden')) {
+      refreshCloudModal();
+    } else {
+      clearInterval(SC.modalRefreshTimer);
+      SC.modalRefreshTimer = null;
+    }
+  }, 20000);
 };
 
 window.closeCloudModal = function() {
   document.getElementById('cloud-modal')?.classList.add('hidden');
+  if (SC.modalRefreshTimer) { clearInterval(SC.modalRefreshTimer); SC.modalRefreshTimer = null; }
 };
 
 window.switchCloudTab = function(tab) {
@@ -642,18 +664,26 @@ async function startLiveSession() {
   if (!SC.client) { cloudToast('Supabase не настроен', 'warn'); return; }
   if (!SC.user) { showLoginModal(); return; }
 
-  // Register live record in DB with version info
+  // Register live record in DB — try with version_label, fall back without
   const liveId = 'live_' + SC.user.id;
   const versionLabel = SC.workingMode === 'central' ? '🌐 ' + (SC.currentInstanceId || SC.projectBase || 'центральный') :
                        SC.workingMode === 'local'   ? '💾 ' + (SC.currentLocalSave || 'локальный') :
                        SC.projectBase ? SC.projectBase : 'черновик';
-  await SC.client.from('projects').upsert({
+  const basePayload = {
     id: liveId, name: 'Live: ' + SC.user.name,
     data: JSON.parse(JSON.stringify({ items: S.items, connections: S.connections })),
     owner: SC.user.id, live: true,
-    updated_at: new Date().toISOString(),
-    version_label: versionLabel
-  }, { onConflict: 'id' });
+    updated_at: new Date().toISOString()
+  };
+  let { error } = await SC.client.from('projects')
+    .upsert({ ...basePayload, version_label: versionLabel }, { onConflict: 'id' });
+  if (error) {
+    // Retry without version_label (column may not exist yet in DB)
+    console.warn('[Live] upsert with version_label failed, retrying without:', error.message);
+    ({ error } = await SC.client.from('projects')
+      .upsert(basePayload, { onConflict: 'id' }));
+    if (error) { cloudToast('Ошибка Live: ' + error.message, 'error'); console.error('[Live]', error); return; }
+  }
 
   // Create realtime channel named after this user
   const chName = 'live_ch_' + SC.user.id;
@@ -699,6 +729,9 @@ async function startLiveSession() {
   startLiveAutosave();
   updateLiveUI('live', SC.user.name);
   cloudToast('● LIVE активен. Другие могут наблюдать за ' + SC.user.name, 'success');
+  // Announce on global channel so others are notified immediately
+  _globalBroadcast('go_live', { uid: SC.user.id, name: SC.user.name, color: SC.user.color, av: SC.user.av, versionLabel });
+  _updateGlobalPresence(true);
 }
 
 async function stopLiveSession() {
@@ -707,6 +740,8 @@ async function stopLiveSession() {
   if (SC.client && SC.user) {
     SC.client.from('projects').update({ live: false }).eq('id', 'live_' + SC.user.id);
   }
+  _globalBroadcast('go_offline', { uid: SC.user?.id });
+  _updateGlobalPresence(false);
   SC.liveMode = false;
   document.getElementById('online-users').innerHTML = '';
   clearRemoteCursors();
@@ -789,6 +824,101 @@ async function stopWatching() {
   SC.watchMode = false; SC.watchReadOnly = false; SC.watchTarget = null;
   clearRemoteCursors();
   updateLiveUI('off', '');
+}
+
+// ════════════════════════════════════════════════════════════════
+// GLOBAL PRESENCE CHANNEL (cg_global) — live announcements
+// Every logged-in user subscribes so they know who is Live
+// ════════════════════════════════════════════════════════════════
+function joinGlobalChannel() {
+  if (!SC.client || !SC.user || SC.globalChannel) return;
+  const ch = SC.client.channel('cg_global', {
+    config: { broadcast: { self: false }, presence: { key: SC.user.id } }
+  });
+
+  // Presence sync — update live badge whenever state changes
+  ch.on('presence', { event: 'sync' }, () => {
+    _updateLiveBadgeFromPresence(ch.presenceState());
+  });
+
+  // Someone just went live
+  ch.on('broadcast', { event: 'go_live' }, ({ payload }) => {
+    if (payload.uid === SC.user?.id) return;
+    const u = TEAM_USERS.find(x => x.id === payload.uid);
+    cloudToast('\u25cf ' + (u?.name || payload.uid) + ' \u043d\u0430\u0447\u0430\u043b Live!', 'info');
+    _setLiveBadge(true);
+    // Auto-refresh modal if it's open
+    if (!document.getElementById('cloud-modal')?.classList.contains('hidden')) {
+      refreshCloudModal();
+    }
+  });
+
+  // Someone stopped live
+  ch.on('broadcast', { event: 'go_offline' }, ({ payload }) => {
+    if (payload.uid === SC.user?.id) return;
+    // Refresh modal live list
+    if (!document.getElementById('cloud-modal')?.classList.contains('hidden')) {
+      refreshCloudModal();
+    }
+    // Re-check badge after a moment (give DB time to update)
+    setTimeout(() => {
+      if (SC.client) {
+        SC.client.from('projects').select('id').eq('live', true).ilike('id', 'live_%')
+          .then(({ data }) => _setLiveBadge((data || []).length > 0));
+      }
+    }, 1500);
+  });
+
+  ch.subscribe(async status => {
+    if (status === 'SUBSCRIBED') {
+      await ch.track({
+        user: SC.user.name, color: SC.user.color, av: SC.user.av,
+        live: SC.liveMode
+      });
+    }
+  });
+
+  SC.globalChannel = ch;
+}
+
+function _globalBroadcast(event, payload) {
+  if (SC.globalChannel) {
+    SC.globalChannel.send({ type: 'broadcast', event, payload }).catch(() => {});
+  }
+}
+
+function _updateGlobalPresence(isLive) {
+  if (SC.globalChannel && SC.user) {
+    SC.globalChannel.track({
+      user: SC.user.name, color: SC.user.color, av: SC.user.av,
+      live: isLive
+    }).catch(() => {});
+  }
+}
+
+function _updateLiveBadgeFromPresence(state) {
+  const anyLive = Object.values(state).flat().some(u => u.live && u.user !== SC.user?.name);
+  _setLiveBadge(anyLive);
+}
+
+function _setLiveBadge(show) {
+  // Show a green dot on the "Проекты" / cloud button when someone else is live
+  const btn = document.getElementById('btn-cloud');
+  if (!btn) return;
+  let dot = document.getElementById('global-live-dot');
+  if (show) {
+    if (!dot) {
+      dot = document.createElement('span');
+      dot.id = 'global-live-dot';
+      dot.title = '\u0415\u0441\u0442\u044c \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0435 Live \u0441\u0435\u0441\u0441\u0438\u0438';
+      dot.style.cssText = 'position:absolute;top:3px;right:3px;width:7px;height:7px;'
+        + 'background:#22c55e;border-radius:50%;border:1.5px solid #fff;pointer-events:none;';
+      btn.style.position = 'relative';
+      btn.appendChild(dot);
+    }
+  } else {
+    dot?.remove();
+  }
 }
 
 // ── Cursor layer: reattach to cvf after renderCanvas wipes ca ────
