@@ -6,28 +6,33 @@
 
 // ── Cloud state ───────────────────────────────────────────────
 const SC = {
-  client:        null,
-  user:          null,
-  projectBase:   null,    // base name, e.g. 'project_1'
-  channel:       null,    // own live broadcast channel
-  watchChannel:  null,    // channel subscribed to for watching another user
-  liveMode:      false,   // WE are broadcasting
-  watchMode:     false,   // watching someone else
-  watchTarget:   null,    // userId being watched
-  liveCursors:   {},      // { userId: domElement }
-  notes:         {},      // { userId: { x,y,text } } — attached notes
-  noteMode:      false,   // waiting for Enter after 'e'
-  noteModeTimer: null,
-  lastCursorX:   0,       // last canvas cursor X
-  lastCursorY:   0,       // last canvas cursor Y
-  lastMouseScr:  null,    // { x, y } in screen coords
-  applyingRemote:false,   // true while applying remote canvas update
-  autosaveTimer: null,
-  localTimer:    null,
-  cursorThrottle:null,
-  loginSelected: null,
+  client:          null,
+  user:            null,
+  projectBase:     null,    // base name, e.g. 'project_1'
+  workingMode:     null,    // 'central' | 'local' | null
+  currentInstanceId: null,  // loaded central instance id
+  currentLocalSave:  null,  // loaded local save name
+  channel:         null,    // own live broadcast channel
+  watchChannel:    null,    // channel for watching another user
+  liveMode:        false,   // WE are broadcasting
+  watchMode:       false,   // watching/co-editing someone else
+  watchReadOnly:   false,   // true = watch only, no edits sent
+  watchTarget:     null,    // userId being watched
+  liveCursors:     {},      // { userId: domElement }
+  notes:           {},      // { userId: { x,y,text } }
+  noteMode:        false,
+  noteModeTimer:   null,
+  lastCursorX:     0,
+  lastCursorY:     0,
+  lastMouseScr:    null,
+  applyingRemote:  false,
+  autosaveTimer:   null,
+  localTimer:      null,
+  cursorThrottle:  null,
+  broadcastTimer:  null,    // debounce for canvas broadcast
+  loginSelected:   null,
 };
-let _origRenderCanvas = null; // hook for co-editing
+let _origRenderCanvas = null;
 
 // ════════════════════════════════════════════════════════════════
 // INIT
@@ -77,11 +82,13 @@ window.initCloud = function() {
       });
     });
   }
-  // Hook renderCanvas for co-editing broadcast
+  // Hook renderCanvas: reattach cursors-layer (renderCanvas wipes ca.innerHTML)
+  // and broadcast canvas changes when in collab mode
   if (window.renderCanvas && !_origRenderCanvas) {
     _origRenderCanvas = window.renderCanvas;
     window.renderCanvas = function(...args) {
       _origRenderCanvas.apply(this, args);
+      _reattachCursorsLayer();
       if (!SC.applyingRemote) broadcastCanvasUpdate();
     };
   }
@@ -132,20 +139,38 @@ function restoreSession() {
 
 window.showLoginModal = function() {
   const m = document.getElementById('cloud-login-modal');
-  if (m) m.classList.remove('hidden');
+  if (!m) return;
+  m.classList.remove('hidden');
+  // Show/hide close button: available only when a user is already logged in (switching)
+  const closeBtn = document.getElementById('login-modal-close');
+  if (closeBtn) closeBtn.style.display = SC.user ? '' : 'none';
+};
+
+window.closeLoginModal = function() {
+  document.getElementById('cloud-login-modal')?.classList.add('hidden');
+  SC._switchingUser = false;
+  // Reset selection state
+  SC.loginSelected = null;
+  document.querySelectorAll('.login-user-card').forEach(c => c.classList.remove('sel'));
+  if (document.getElementById('login-pass')) document.getElementById('login-pass').value = '';
 };
 
 function buildLoginModal() {
   const list = document.getElementById('login-user-list');
   if (!list) return;
-  list.innerHTML = TEAM_USERS.map(u => `
-    <div class="login-user-card" data-uid="${u.id}"
-         style="border-left:4px solid ${u.color};"
+  list.innerHTML = TEAM_USERS.map(u => {
+    const isCurrent = SC.user?.id === u.id;
+    return `<div class="login-user-card" data-uid="${u.id}"
+         style="border-left:4px solid ${u.color};${isCurrent ? 'opacity:.45;pointer-events:none;' : ''}" 
          onclick="selectLoginUser('${u.id}')">
       <span class="login-av" style="background:${u.color};">${u.av}</span>
       <span style="font-weight:700;">${u.name}</span>
-    </div>
-  `).join('');
+      ${isCurrent ? '<span style="font-size:9px;color:#9ca3af;margin-left:auto;">✓ здесь</span>' : ''}
+    </div>`;
+  }).join('');
+  // Update modal title if switching
+  const title = document.getElementById('login-modal-title');
+  if (title) title.textContent = SC._switchingUser ? '🔄 Сменить пользователя' : 'Войти';
 }
 
 window.selectLoginUser = function(uid) {
@@ -162,13 +187,18 @@ window.doLogin = function() {
   if (!uid) { cloudToast('Выберите пользователя', 'warn'); return; }
   const u = TEAM_USERS.find(u => u.id === uid);
   if (!u || u.pass !== pass) { cloudToast('Неверный пароль!', 'error'); return; }
+  // If switching from an existing user, don't restore draft (already have canvas)
+  const isSwitching = SC._switchingUser || (SC.user && SC.user.id !== u.id);
+  SC._switchingUser = false;
   SC.user = { id: u.id, name: u.name, color: u.color, av: u.av };
   localStorage.setItem('cg_user', JSON.stringify(SC.user));
   renderUserBadge();
   document.getElementById('cloud-login-modal').classList.add('hidden');
   if (document.getElementById('login-pass')) document.getElementById('login-pass').value = '';
-  cloudToast('Привет, ' + u.name + '!', 'success');
-  restoreLocalDraft();
+  SC.loginSelected = null;
+  document.querySelectorAll('.login-user-card').forEach(c => c.classList.remove('sel'));
+  cloudToast((isSwitching ? 'Смена аккаунта: ' : 'Привет, ') + u.name + '!', 'success');
+  if (!isSwitching) restoreLocalDraft();
 };
 
 window.logoutUser = function() {
@@ -185,7 +215,7 @@ function renderUserBadge() {
   if (SC.user) {
     b.innerHTML = `<span style="background:${SC.user.color};color:#fff;padding:3px 9px;border-radius:10px;
         font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;"
-        onclick="logoutUser()" title="Выйти (${SC.user.name})">
+        onclick="showAccountPanel()" title="Аккаунт">
         ${SC.user.av} ${SC.user.name}
       </span>`;
   } else {
@@ -196,6 +226,92 @@ function renderUserBadge() {
   if (lbl) lbl.textContent = SC.projectBase ? '📁 ' + SC.projectBase : '—';
   renderContextBar();
 }
+
+// ── Account panel (click on badge) ──────────────────────────────
+window.showAccountPanel = function() {
+  // Remove old panel if any
+  document.getElementById('account-panel')?.remove();
+  if (!SC.user) { showLoginModal(); return; }
+
+  const panel = document.createElement('div');
+  panel.id = 'account-panel';
+  panel.style.cssText = 'position:fixed;top:46px;right:10px;z-index:4000;background:#fff;'
+    + 'border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;box-shadow:0 8px 28px rgba(0,0,0,.18);'
+    + 'min-width:200px;max-width:260px;';
+
+  const u = SC.user;
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="background:${u.color};color:#fff;width:30px;height:30px;border-radius:50%;
+          display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;">${u.av}</span>
+        <div>
+          <div style="font-weight:700;font-size:13px;">${u.name}</div>
+          <div style="font-size:10px;color:#9ca3af;">@${u.id}</div>
+        </div>
+      </div>
+      <span onclick="closeAccountPanel()" style="cursor:pointer;color:#9ca3af;font-size:18px;line-height:1;padding:2px 5px;"
+        title="Закрыть">×</span>
+    </div>
+    <div style="font-size:10px;color:#6b7280;margin-bottom:10px;border-top:1px solid #f3f4f6;padding-top:8px;">
+      ${SC.liveMode ? '<span style="color:#22c55e;font-weight:700;">● LIVE активен</span>' : ''}
+      ${SC.watchMode ? '<span style="color:#3b82f6;font-weight:700;">✏️ Совм. сессия</span>' : ''}
+      ${SC.workingMode === 'central' ? '🌐 ' + (SC.currentInstanceId || 'центральный') : ''}
+      ${SC.workingMode === 'local' ? '💾 ' + (SC.currentLocalSave || 'локальный') : ''}
+      ${!SC.workingMode ? '― черновик' : ''}
+    </div>
+    <button class="btn btn-s" onclick="_switchAccount()" style="width:100%;font-size:11px;margin-bottom:6px;">
+      🔄 Сменить пользователя
+    </button>
+    <button class="btn btn-rl" onclick="_confirmLogout()" style="width:100%;font-size:11px;">
+      → Выйти
+    </button>`;
+
+  document.body.appendChild(panel);
+
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('mousedown', _outsideAccountClose, { once: true });
+  }, 50);
+};
+
+function _outsideAccountClose(e) {
+  if (!document.getElementById('account-panel')?.contains(e.target)) {
+    closeAccountPanel();
+  }
+}
+
+window.closeAccountPanel = function() {
+  document.getElementById('account-panel')?.remove();
+  document.removeEventListener('mousedown', _outsideAccountClose);
+};
+
+window._switchAccount = function() {
+  closeAccountPanel();
+  const hasActivity = SC.liveMode || SC.watchMode;
+  if (hasActivity) {
+    if (!confirm('Вы в активной Live/совместной сессии. Выйти из неё и сменить пользователя?')) return;
+    if (SC.liveMode) stopLiveSession();
+    if (SC.watchMode) stopWatching();
+  }
+  // Mark that we're switching (not a fresh login)
+  SC._switchingUser = true;
+  buildLoginModal();
+  showLoginModal();
+};
+
+window._confirmLogout = function() {
+  closeAccountPanel();
+  const hasActivity = SC.liveMode || SC.watchMode;
+  if (hasActivity && !confirm('Вы в активной сессии. Выйти?')) return;
+  SC.user = null; SC.projectBase = null;
+  SC._switchingUser = false;
+  localStorage.removeItem('cg_user');
+  if (SC.liveMode) stopLiveSession();
+  if (SC.watchMode) stopWatching();
+  renderUserBadge();
+  showLoginModal();
+};
 
 // ════════════════════════════════════════════════════════════════
 // LOCAL AUTOSAVE (localStorage — always free, no internet)
@@ -300,6 +416,9 @@ window.loadInstance = async function(instanceId) {
   S.selId = null; S.selIds = []; S.selIsCopy = false; S.selConnId = null;
   const m = instanceId.match(/^(.+)_экземпляр_\d+$/);
   SC.projectBase = m ? m[1] : instanceId;
+  SC.workingMode = 'central';
+  SC.currentInstanceId = instanceId;
+  SC.currentLocalSave = null;
   renderCanvas(); renderDom(); updAnimBtn(); updPreview();
   renderUserBadge();
   cloudToast('Загружен: ' + instanceId, 'success');
@@ -336,6 +455,9 @@ window.loadLocalSave = function(id) {
   if (!s) { cloudToast('Не найдено', 'error'); return; }
   S.items = s.data?.items || []; S.connections = s.data?.connections || [];
   S.selId = null; S.selIds = []; S.selIsCopy = false; S.selConnId = null;
+  SC.workingMode = 'local';
+  SC.currentLocalSave = s.name;
+  SC.currentInstanceId = null;
   renderCanvas(); renderDom(); updAnimBtn(); updPreview();
   cloudToast('Загружен: ' + s.name, 'success');
 };
@@ -454,23 +576,33 @@ async function refreshCloudModal() {
   let liveHtml = '';
   if (SC.client) {
     const { data: liveRecs } = await SC.client.from('projects')
-      .select('id, owner, updated_at').eq('live', true).ilike('id', 'live_%');
+      .select('id, owner, updated_at, version_label').eq('live', true).ilike('id', 'live_%');
     (liveRecs || []).forEach(p => {
       const uid = p.id.replace('live_', '');
       const u = TEAM_USERS.find(x => x.id === uid);
       const isSelf = SC.user?.id === uid;
-      liveHtml += `<div style="padding:7px 10px;border:2px solid ${u?.color||'#e5e7eb'};
-        border-radius:6px;margin-bottom:6px;background:#fff;display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <span style="display:inline-block;background:${u?.color||'#8b5cf6'};color:#fff;
-            padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-right:6px;">● ${u?.av||'?'}</span>
-          <span style="font-weight:700;font-size:12px;">${u?.name||uid}</span>
-          <span style="font-size:10px;color:var(--mu);margin-left:7px;">${p.updated_at?.slice(11,16)||''}</span>
+      const vl = p.version_label || '';
+      liveHtml += `<div style="padding:8px 11px;border:2px solid ${u?.color||'#e5e7eb'};
+        border-radius:7px;margin-bottom:7px;background:#fff;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <span style="display:inline-block;background:${u?.color||'#8b5cf6'};color:#fff;
+              padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;margin-right:6px;">● ${u?.av||'?'}</span>
+            <span style="font-weight:700;font-size:12px;">${u?.name||uid}</span>
+            <span style="font-size:10px;color:var(--mu);margin-left:6px;">${p.updated_at?.slice(11,16)||''}</span>
+          </div>
+          ${isSelf
+            ? '<span style="font-size:10px;color:var(--mu);font-style:italic;">это вы</span>'
+            : `<div style="display:flex;gap:5px;">
+                <button class="btn btn-s" style="font-size:10px;padding:3px 9px;"
+                  onclick="watchLive('${uid}',true);closeCloudModal();">👁 Смотреть</button>
+                <button class="btn btn-b" style="font-size:10px;padding:3px 9px;"
+                  onclick="watchLive('${uid}',false);closeCloudModal();">✏️ Редактировать</button>
+              </div>`
+          }
         </div>
-        ${isSelf
-          ? '<span style="font-size:10px;color:var(--mu);">это вы</span>'
-          : `<button class="btn btn-b" style="font-size:10px;padding:3px 10px;" onclick="watchLive('${uid}');closeCloudModal();">👁 Наблюдать</button>`
-        }
+        ${vl ? `<div style="font-size:10px;color:#6b7280;margin-top:4px;padding-top:4px;border-top:1px solid #f3f4f6;">
+          Версия: <b>${vl}</b></div>` : ''}
       </div>`;
     });
   }
@@ -510,13 +642,17 @@ async function startLiveSession() {
   if (!SC.client) { cloudToast('Supabase не настроен', 'warn'); return; }
   if (!SC.user) { showLoginModal(); return; }
 
-  // Register live record in DB (others will see this user as live)
+  // Register live record in DB with version info
   const liveId = 'live_' + SC.user.id;
+  const versionLabel = SC.workingMode === 'central' ? '🌐 ' + (SC.currentInstanceId || SC.projectBase || 'центральный') :
+                       SC.workingMode === 'local'   ? '💾 ' + (SC.currentLocalSave || 'локальный') :
+                       SC.projectBase ? SC.projectBase : 'черновик';
   await SC.client.from('projects').upsert({
     id: liveId, name: 'Live: ' + SC.user.name,
     data: JSON.parse(JSON.stringify({ items: S.items, connections: S.connections })),
     owner: SC.user.id, live: true,
-    updated_at: new Date().toISOString()
+    updated_at: new Date().toISOString(),
+    version_label: versionLabel
   }, { onConflict: 'id' });
 
   // Create realtime channel named after this user
@@ -533,6 +669,11 @@ async function startLiveSession() {
   SC.channel.on('broadcast', { event: 'request_sync' }, () => {
     SC.channel.send({ type: 'broadcast', event: 'full_sync',
       payload: { items: S.items, connections: S.connections, base: SC.projectBase } });
+  });
+
+  // See watchers' cursors
+  SC.channel.on('broadcast', { event: 'cursor' }, ({ payload }) => {
+    if (payload.uid !== SC.user?.id) updateRemoteCursor(payload);
   });
 
   // Receive canvas edits from co-editors/watchers
@@ -573,8 +714,8 @@ async function stopLiveSession() {
   cloudToast('Live остановлен', 'info');
 }
 
-// Watch another user's live session
-window.watchLive = async function(targetUserId) {
+// Watch another user's live session (readOnly=true: observe only, no edits sent)
+window.watchLive = async function(targetUserId, readOnly) {
   if (!SC.client) { cloudToast('Supabase не настроен', 'warn'); return; }
   if (!SC.user) { showLoginModal(); return; }
   if (SC.watchMode) await stopWatching();
@@ -632,38 +773,63 @@ window.watchLive = async function(targetUserId) {
   });
 
   SC.watchMode = true;
+  SC.watchReadOnly = (readOnly === true);
   SC.watchTarget = targetUserId;
   const u = TEAM_USERS.find(x => x.id === targetUserId);
-  updateLiveUI('watch', u?.name || targetUserId);
-  cloudToast('👁 Наблюдаете за ' + (u?.name || targetUserId) + '. Редактирование включено.', 'info');
+  const modeLabel = SC.watchReadOnly ? '👁 ' + (u?.name || targetUserId) : '✏️ ' + (u?.name || targetUserId);
+  updateLiveUI('watch', modeLabel);
+  const msg = SC.watchReadOnly
+    ? '👁 Наблюдаете за ' + (u?.name || targetUserId) + ' (только просмотр)'
+    : '✏️ Совместное редактирование с ' + (u?.name || targetUserId);
+  cloudToast(msg, 'info');
 };
 
 async function stopWatching() {
   if (SC.watchChannel) { await SC.watchChannel.unsubscribe(); SC.watchChannel = null; }
-  SC.watchMode = false; SC.watchTarget = null;
+  SC.watchMode = false; SC.watchReadOnly = false; SC.watchTarget = null;
   clearRemoteCursors();
   updateLiveUI('off', '');
 }
 
-// ── Co-editing: canvas broadcast & apply ─────────────────────
-function broadcastCanvasUpdate() {
-  const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
-  if (!ch || !SC.user) return;
-  ch.send({
-    type: 'broadcast', event: 'canvas_update',
-    payload: { items: S.items, connections: S.connections, from: SC.user.id }
-  });
+// ── Cursor layer: reattach to cvf after renderCanvas wipes ca ────
+// renderCanvas() does ca.innerHTML=... which destroys cursors-layer.
+// We reattach it to cvf (the inner positioned div) after every render.
+function _reattachCursorsLayer() {
+  const cvf = document.getElementById('cvf');
+  if (!cvf) return;
+  let layer = document.getElementById('cursors-layer');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'cursors-layer';
+    layer.style.cssText = 'position:absolute;top:0;left:0;width:4000px;height:3000px;pointer-events:none;z-index:200;';
+    // Clear stale domElement refs so cursors are re-created
+    SC.liveCursors = {};
+  }
+  if (!cvf.contains(layer)) cvf.appendChild(layer);
 }
 
-function applyRemoteCanvas({ items, connections, from }) {
-  if (from && from !== '__sync__') {
-    // Allow apply even without from check since from===own is filtered upstream
-  }
+// ── Co-editing: canvas broadcast (debounced 150ms) ──────────────
+function broadcastCanvasUpdate() {
+  const ch = SC.liveMode ? SC.channel :
+             (SC.watchMode && !SC.watchReadOnly ? SC.watchChannel : null);
+  if (!ch || !SC.user) return;
+  if (SC.broadcastTimer) clearTimeout(SC.broadcastTimer);
+  SC.broadcastTimer = setTimeout(() => {
+    SC.broadcastTimer = null;
+    ch.send({
+      type: 'broadcast', event: 'canvas_update',
+      payload: { items: S.items, connections: S.connections, from: SC.user.id }
+    });
+  }, 150);
+}
+
+function applyRemoteCanvas({ items, connections }) {
   SC.applyingRemote = true;
   S.items = items || S.items;
   S.connections = connections || S.connections;
   S.selId = null; S.selIds = []; S.selIsCopy = false; S.selConnId = null;
   if (_origRenderCanvas) _origRenderCanvas.call(window);
+  _reattachCursorsLayer();
   if (typeof renderDom === 'function') renderDom();
   if (typeof updAnimBtn === 'function') updAnimBtn();
   SC.applyingRemote = false;
@@ -855,27 +1021,44 @@ function renderContextBar() {
   if (!ctxLocal) return;
   if (!SC.user) { ctxLocal.textContent = '—'; ctxGlobal.textContent = ''; return; }
 
-  let local = SC.user.av + ' ' + SC.user.name;
+  // Line 1: who + collab indicator
+  let who = SC.user.av + ' ' + SC.user.name;
   if (SC.watchMode && SC.watchTarget) {
-    const u = TEAM_USERS.find(x => x.id === SC.watchTarget);
-    local = '✏️ совм. с ' + (u?.name || SC.watchTarget);
+    const host = TEAM_USERS.find(x => x.id === SC.watchTarget);
+    who += (SC.watchReadOnly ? '  👁 ' : '  ✏️ ') + (host?.name || SC.watchTarget);
+  } else if (SC.liveMode) {
+    who += '  📡 LIVE';
   }
-  if (SC.projectBase) local += ' | ' + SC.projectBase;
-  ctxLocal.textContent = local;
+  ctxLocal.textContent = who;
 
-  // Async: fetch last global instance
+  // Line 2: working version + global latest
+  let versionLine = '';
+  if (SC.workingMode === 'central' && SC.currentInstanceId) {
+    const m = SC.currentInstanceId.match(/_экземпляр_(\d+)$/);
+    versionLine = '🌐 центр.' + (m ? ' экз. ' + m[1] : ' ' + SC.currentInstanceId);
+  } else if (SC.workingMode === 'local' && SC.currentLocalSave) {
+    const short = SC.currentLocalSave.length > 22 ? SC.currentLocalSave.slice(0,20) + '…' : SC.currentLocalSave;
+    versionLine = '💾 ' + short;
+  } else if (SC.projectBase) {
+    versionLine = '📁 ' + SC.projectBase;
+  } else {
+    versionLine = '― черновик';
+  }
+  ctxGlobal.textContent = versionLine;
+
+  // Append latest global instance info (async, low priority)
   if (SC.client && SC.projectBase) {
     SC.client.from('projects')
       .select('id').ilike('id', SC.projectBase + '_экземпляр_%')
       .not('id', 'ilike', 'live_%')
       .order('id', { ascending: false }).limit(1)
       .then(({ data }) => {
-        if (!data?.[0]) { ctxGlobal.textContent = 'глобальных нет'; return; }
+        if (!data?.[0]) return;
         const m = data[0].id.match(/_экземпляр_(\d+)$/);
-        ctxGlobal.textContent = m ? 'глобальный: экз. ' + m[1] : data[0].id;
+        const latest = m ? 'экз. ' + m[1] : data[0].id;
+        if (ctxGlobal.textContent && !ctxGlobal.textContent.includes('→'))
+          ctxGlobal.textContent += ' → глоб. ' + latest;
       });
-  } else {
-    ctxGlobal.textContent = SC.projectBase ? '' : 'без проекта';
   }
 }
 

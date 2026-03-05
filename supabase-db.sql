@@ -5,14 +5,18 @@
 
 -- ── 1. Таблица проектов ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS projects (
-  id          text PRIMARY KEY,
-  name        text NOT NULL DEFAULT 'Без названия',
-  data        jsonb NOT NULL DEFAULT '{}',
-  owner       text,
-  live        boolean DEFAULT false,
-  created_at  timestamptz DEFAULT now(),
-  updated_at  timestamptz DEFAULT now()
+  id            text PRIMARY KEY,
+  name          text NOT NULL DEFAULT 'Без названия',
+  data          jsonb NOT NULL DEFAULT '{}',
+  owner         text,
+  live          boolean DEFAULT false,
+  version_label text,   -- e.g. '🌐 project_1_экземпляр_3' or '💾 my-local-save'
+  created_at    timestamptz DEFAULT now(),
+  updated_at    timestamptz DEFAULT now()
 );
+
+-- Add version_label if table already exists (safe to run on existing DB)
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS version_label text;
 
 -- ── 2. Таблица версий ─────────────────────────────────────────
 -- Формат id: project_1_экземпляр_15_апрув_сейв_2025-03-05_10-30
