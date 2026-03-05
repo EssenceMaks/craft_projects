@@ -1,16 +1,17 @@
 'use strict';
 // ════════════════════════════════════════════════════════════════
-// WORKSPACE CG — World-positioned iframe panels
-// Each "Создать окна CG" spawns 5 iframes loading coponent_generator.html?tab=N
-// positioned in PixiJS world-space, tracking camera via rAF + CSS transform.
+// WORKSPACE CG — World-positioned draggable/resizable iframe panels
+// Each panel tracks the camera via rAF + CSS transform.
+// Drag:   grab the panel header.
+// Resize: drag the ◢ handle at bottom-right.
 // ════════════════════════════════════════════════════════════════
 
 // ── Config ──────────────────────────────────────────────────────
 const CG_CFG = {
-  MINI_W:   1200,   // each panel width  (world-px)
-  MINI_H:   1000,   // each panel height (world-px)
-  HEADER_H: 36,     // panel header height (always in CSS px, not scaled)
-  GAP:      24,     // gap between panels (world-px)
+  MINI_W:   1200,   // default panel width  (world-px)
+  MINI_H:   1000,   // default panel height (world-px)
+  HEADER_H: 36,     // panel header height (always CSS px, never scaled)
+  GAP:      24,     // gap between panels at creation (world-px)
   OFFSET_Y: 60,     // distance below parent bubble (world-px)
 };
 
@@ -24,7 +25,7 @@ const CG_DEFS = [
 
 // ── State ────────────────────────────────────────────────────────
 const _cgW = {
-  worlds: {},   // bubbleId → { container, bubbleId }
+  worlds: {},   // bubbleId → { bubbleId, panels:[] }
   rafId:  null,
 };
 
@@ -35,99 +36,333 @@ window.createCGWorldForBubble = function(bubbleId) {
   const b = st.bubbles?.[bubbleId];
   if (!b) return;
 
-  // Tear down previous world for this bubble if any
   _destroyCGWorld(bubbleId);
 
-  const totalW = 5 * CG_CFG.MINI_W + 4 * CG_CFG.GAP;
-
-  // Compute world-space anchor (below & centered on bubble)
-  const startWX = b.x + b.size / 2 - totalW / 2;
-  const startWY = b.y + b.size + CG_CFG.OFFSET_Y;
-
-  // Layer above canvas (pointer-events passthrough except on panels)
   const layer = _getLayer();
+  const inst  = { bubbleId, panels: [] };
 
-  // ── Outer flex wrapper ──────────────────────────────────────
-  const container = document.createElement('div');
-  container.className  = 'cgw-wrap';
-  container.dataset.bid = bubbleId;
-  // Natural size = total world px; transform moves+scales it each frame
-  container.style.cssText =
-    `position:absolute;left:0;top:0;` +
-    `width:${totalW}px;height:${CG_CFG.MINI_H}px;` +
-    `transform-origin:0 0;` +
-    `display:flex;gap:${CG_CFG.GAP}px;` +
-    `pointer-events:none;`;
+  const totalW = CG_DEFS.length * (CG_CFG.MINI_W + CG_CFG.GAP) - CG_CFG.GAP;
+  const _bw = b.width  || b.size;
+  const _bh = b.height || b.size;
+  const baseWX = b.x + _bw / 2 - totalW / 2;
+  const baseWY = b.y + _bh + CG_CFG.OFFSET_Y;
 
-  CG_DEFS.forEach((tab, _i) => {
-    // ── Panel ─────────────────────────────────────────────────
-    const panel = document.createElement('div');
-    panel.style.cssText =
+  CG_DEFS.forEach((tab, i) => {
+    // Per-panel world-space state
+    const panel = {
+      wx: baseWX + i * (CG_CFG.MINI_W + CG_CFG.GAP),
+      wy: baseWY,
+      ww: CG_CFG.MINI_W,
+      wh: CG_CFG.MINI_H,
+      el: null,
+      tab, bubbleId,
+    };
+
+    // ── Panel element ────────────────────────────────────────
+    const panelEl = document.createElement('div');
+    panelEl.style.cssText =
+      `position:absolute;left:0;top:0;` +
+      `width:${panel.ww}px;height:${panel.wh}px;` +
+      `transform-origin:0 0;` +
       `display:flex;flex-direction:column;` +
-      `width:${CG_CFG.MINI_W}px;height:${CG_CFG.MINI_H}px;flex-shrink:0;` +
       `border-radius:14px;overflow:hidden;` +
       `border:2px solid ${tab.color}55;` +
       `box-shadow:0 16px 56px rgba(0,0,0,.75);` +
       `background:#0b0d17;pointer-events:auto;`;
+    panel.el = panelEl;
 
-    // ── Header ────────────────────────────────────────────────
+    // ── Header (drag handle) ──────────────────────────────────
     const hdr = document.createElement('div');
     hdr.style.cssText =
       `height:${CG_CFG.HEADER_H}px;flex-shrink:0;` +
       `background:${tab.color}1a;border-bottom:1px solid ${tab.color}44;` +
       `display:flex;align-items:center;justify-content:space-between;` +
-      `padding:0 14px;user-select:none;cursor:default;`;
+      `padding:0 14px;user-select:none;cursor:grab;`;
     hdr.innerHTML =
       `<span style="font-size:13px;font-weight:700;color:${tab.color};">${tab.icon} ${tab.name}</span>` +
-      `<button data-close="${bubbleId}" ` +
+      `<button class="cgw-close" ` +
         `style="background:none;border:none;color:#7a8599;cursor:pointer;` +
                `font-size:16px;line-height:1;padding:2px 6px;border-radius:4px;" ` +
-        `title="Закрыть мир CG">✕</button>`;
+        `title="Закрыть вкладку">✕</button>`;
 
-    // ── iframe ────────────────────────────────────────────────
+    // ── iframe ───────────────────────────────────────────────
     const iframe = document.createElement('iframe');
-    iframe.src = `coponent_generator.html?tab=${tab.idx}`;
-    iframe.style.cssText =
-      `flex:1;border:none;width:100%;display:block;`;
+    iframe.src = `coponent_generator.html?tab=${tab.idx}&embed=1`;
+    iframe.style.cssText = `flex:1;border:none;width:100%;display:block;`;
     iframe.setAttribute('sandbox',
       'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
     iframe.setAttribute('loading', 'lazy');
 
-    panel.appendChild(hdr);
-    panel.appendChild(iframe);
-    container.appendChild(panel);
+    // ── Resize handle (bottom-right) ─────────────────────────
+    const resizer = document.createElement('div');
+    resizer.style.cssText =
+      `position:absolute;bottom:0;right:0;width:22px;height:22px;` +
+      `cursor:se-resize;display:flex;align-items:center;justify-content:center;` +
+      `color:#7a8599;font-size:14px;user-select:none;z-index:10;` +
+      `background:rgba(0,0,0,.35);border-top-left-radius:8px;`;
+    resizer.textContent = '◢';
+
+    panelEl.appendChild(hdr);
+    panelEl.appendChild(iframe);
+    panelEl.appendChild(resizer);
+    layer.appendChild(panelEl);
+
+    // ── Wire interactions ────────────────────────────────────
+    _makeDraggable(hdr, panel);
+    _makeResizable(resizer, panel, panelEl);
+    _makePinBtn(hdr, panel);
+
+    // Close this panel only
+    hdr.querySelector('.cgw-close').addEventListener('click', ev => {
+      ev.stopPropagation();
+      panelEl.remove();
+      const pi = inst.panels.indexOf(panel);
+      if (pi >= 0) inst.panels.splice(pi, 1);
+      if (inst.panels.length === 0) {
+        delete _cgW.worlds[bubbleId];
+        if (Object.keys(_cgW.worlds).length === 0) {
+          cancelAnimationFrame(_cgW.rafId); _cgW.rafId = null;
+        }
+      }
+    });
+
+    // Wheel on header/panel-border → forward to camera zoom
+    panelEl.addEventListener('wheel', e => {
+      if (e.target === iframe) return; // inside iframe — let it handle
+      e.preventDefault(); e.stopPropagation();
+      _forwardWheelToCanvas(e);
+    }, { passive: false });
+
+    inst.panels.push(panel);
   });
 
-  // Close button handler (delegated)
-  container.addEventListener('click', e => {
-    if (e.target.dataset.close) _destroyCGWorld(e.target.dataset.close);
-  });
-
-  layer.appendChild(container);
-  _cgW.worlds[bubbleId] = { container, bubbleId, startWX, startWY };
-
+  _cgW.worlds[bubbleId] = inst;
   _startLoop();
   _updatePositions();
 
+  _saveCGLayout();
   typeof wsToast === 'function' &&
-    wsToast('🧩 CG мир открыт — пан/зум для навигации по вкладкам', 'success');
+    wsToast('🧩 CG мир открыт — тяни за заголовок, масштаб ◢ уголком', 'success');
 };
 
-window.destroyCGWorld = function(bubbleId) { _destroyCGWorld(bubbleId); };
-
-window.destroyAllCGWorlds = function() {
-  Object.keys(_cgW.worlds).forEach(_destroyCGWorld);
+// ── Mode-choice dialog ──────────────────────────────────────────
+window.createCGWindows = function(bubbleId) {
+  // Remove stale dialog if any
+  document.getElementById('cg-mode-dialog')?.remove();
+  const dlg = document.createElement('div');
+  dlg.id = 'cg-mode-dialog';
+  dlg.style.cssText =
+    'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);' +
+    'background:#1a1d2e;border:1px solid rgba(0,255,204,.3);border-radius:14px;' +
+    'padding:22px 28px;z-index:9000;box-shadow:0 20px 60px rgba(0,0,0,.7);' +
+    'min-width:320px;color:#e0e6ed;font-family:Segoe UI,sans-serif;';
+  dlg.innerHTML = `
+    <div style="font-size:14px;font-weight:700;margin-bottom:14px;">🧩 Как открыть CG для этого бабла?</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button id="cg-dlg-5win" style="background:#8b5cf622;border:1px solid #8b5cf6;border-radius:8px;padding:10px 14px;color:#e0e6ed;cursor:pointer;font-size:13px;text-align:left;">📐 5 отдельных окон<br><span style="font-size:10px;color:#7a8599;">Каждая вкладка — своё независимое окно</span></button>
+      <button id="cg-dlg-1tab" style="background:#3b82f622;border:1px solid #3b82f6;border-radius:8px;padding:10px 14px;color:#e0e6ed;cursor:pointer;font-size:13px;text-align:left;">📋 1 окно с вкладками<br><span style="font-size:10px;color:#7a8599;">Одно большое окно, переключение вкладок внутри</span></button>
+      <button id="cg-dlg-cancel" style="background:none;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px;color:#7a8599;cursor:pointer;font-size:12px;">Отмена</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  const close = () => dlg.remove();
+  dlg.querySelector('#cg-dlg-5win').onclick    = () => { close(); window.createCGWorldForBubble(bubbleId); };
+  dlg.querySelector('#cg-dlg-1tab').onclick    = () => { close(); _createCGTabbed(bubbleId); };
+  dlg.querySelector('#cg-dlg-cancel').onclick  = close;
+  setTimeout(() => document.addEventListener('click', function h(e) {
+    if (!dlg.contains(e.target)) { close(); document.removeEventListener('click', h); }
+  }), 100);
 };
+
+// ── Tabbed mode (1 panel, internal tab-bar) ──────────────────────
+function _createCGTabbed(bubbleId) {
+  const st = window.getBubbleState(); if (!st) return;
+  const b = st.bubbles?.[bubbleId]; if (!b) return;
+  _destroyCGWorld(bubbleId);
+  const layer = _getLayer();
+  const inst = { bubbleId, panels: [], tabbed: true };
+  const totalW = CG_DEFS.length * (CG_CFG.MINI_W + CG_CFG.GAP) - CG_CFG.GAP;
+  const _bwT = b.width  || b.size;
+  const _bhT = b.height || b.size;
+  const panel = {
+    wx: b.x + _bwT / 2 - totalW / 2,
+    wy: b.y + _bhT + CG_CFG.OFFSET_Y,
+    ww: totalW, wh: CG_CFG.MINI_H, el: null, bubbleId,
+  };
+  const panelEl = document.createElement('div');
+  panelEl.style.cssText =
+    `position:absolute;left:0;top:0;width:${panel.ww}px;height:${panel.wh}px;` +
+    `transform-origin:0 0;display:flex;flex-direction:column;` +
+    `border-radius:14px;overflow:hidden;border:2px solid rgba(0,255,204,.3);` +
+    `box-shadow:0 16px 56px rgba(0,0,0,.75);background:#0b0d17;pointer-events:auto;`;
+  panel.el = panelEl;
+  // Tab bar
+  const tabBar = document.createElement('div');
+  tabBar.style.cssText =
+    `display:flex;align-items:center;background:rgba(0,0,0,.4);` +
+    `border-bottom:1px solid rgba(0,255,204,.2);flex-shrink:0;height:${CG_CFG.HEADER_H}px;cursor:grab;`;
+  CG_DEFS.forEach((tab, i) => {
+    const tb = document.createElement('button');
+    tb.textContent = `${tab.icon} ${tab.name}`;
+    tb.style.cssText =
+      `border:none;background:${i===0?tab.color+'33':'transparent'};` +
+      `color:${i===0?tab.color:'#7a8599'};padding:0 16px;height:100%;cursor:pointer;` +
+      `font-size:12px;font-weight:700;border-right:1px solid rgba(255,255,255,.07);`;
+    tb.dataset.idx = i;
+    tabBar.appendChild(tb);
+  });
+  const closeBtnT = document.createElement('button');
+  closeBtnT.className = 'cgw-close';
+  closeBtnT.style.cssText =
+    `margin-left:auto;background:none;border:none;color:#7a8599;cursor:pointer;font-size:16px;padding:0 12px;`;
+  closeBtnT.textContent = '✕';
+  tabBar.appendChild(closeBtnT);
+  // Iframe
+  const iframe = document.createElement('iframe');
+  iframe.src = `coponent_generator.html?tab=1&embed=1`;
+  iframe.style.cssText = `flex:1;border:none;width:100%;display:block;`;
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
+  // Resize handle
+  const resizer = document.createElement('div');
+  resizer.style.cssText =
+    `position:absolute;bottom:0;right:0;width:22px;height:22px;cursor:se-resize;` +
+    `display:flex;align-items:center;justify-content:center;color:#7a8599;font-size:14px;` +
+    `user-select:none;z-index:10;background:rgba(0,0,0,.35);border-top-left-radius:8px;`;
+  resizer.textContent = '◢';
+  panelEl.appendChild(tabBar); panelEl.appendChild(iframe); panelEl.appendChild(resizer);
+  layer.appendChild(panelEl);
+  // Tab switching
+  tabBar.querySelectorAll('button[data-idx]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = +btn.dataset.idx;
+      iframe.src = `coponent_generator.html?tab=${CG_DEFS[i].idx}&embed=1`;
+      tabBar.querySelectorAll('button[data-idx]').forEach((b2, j) => {
+        b2.style.background = j===i ? CG_DEFS[j].color+'33' : 'transparent';
+        b2.style.color = j===i ? CG_DEFS[j].color : '#7a8599';
+      });
+    });
+  });
+  closeBtnT.addEventListener('click', ev => { ev.stopPropagation(); _destroyCGWorld(bubbleId); });
+  _makeDraggable(tabBar, panel);
+  _makeResizable(resizer, panel, panelEl);
+  _makePinBtn(tabBar, panel);
+  panelEl.addEventListener('wheel', e => {
+    if (e.target === iframe) return;
+    e.preventDefault(); e.stopPropagation(); _forwardWheelToCanvas(e);
+  }, { passive: false });
+  inst.panels.push(panel);
+  _cgW.worlds[bubbleId] = inst;
+  _startLoop(); _updatePositions();
+  _saveCGLayout();
+  typeof wsToast === 'function' && wsToast('🧩 CG вкладочный режим открыт', 'success');
+}
+
+// ── Pin / Q-E navigation ──────────────────────────────────────────
+const _cgPin = { list: [], idx: 0 };
+function _makePinBtn(hdr, panel) {
+  const pin = document.createElement('button');
+  pin.className = 'cgw-pin';
+  pin.style.cssText =
+    `background:none;border:none;color:#7a8599;cursor:pointer;font-size:14px;padding:0 6px;`;
+  pin.textContent = '📌';
+  pin.title = 'Прикрепить (Q/E для навигации)';
+  pin.addEventListener('click', ev => {
+    ev.stopPropagation();
+    const idx = _cgPin.list.indexOf(panel);
+    if (idx >= 0) {
+      _cgPin.list.splice(idx, 1); pin.style.opacity = '0.3';
+    } else {
+      _cgPin.list.push(panel); pin.style.opacity = '1';
+    }
+  });
+  hdr.insertBefore(pin, hdr.querySelector('.cgw-close'));
+}
+window._cgNavigatePinned = function(dir) {
+  const list = _cgPin.list.filter(p => p.el?.isConnected);
+  if (!list.length) return;
+  _cgPin.idx = ((_cgPin.idx + dir) % list.length + list.length) % list.length;
+  const panel = list[_cgPin.idx];
+  const wc = window.worldContainer; if (!wc) return;
+  const scale = wc.scale.x;
+  const cx = panel.wx + panel.ww / 2, cy = panel.wy + panel.wh / 2;
+  wc.x = innerWidth  / 2 - cx * scale;
+  wc.y = innerHeight / 2 - cy * scale;
+  if (typeof applyCameraBounds === 'function') applyCameraBounds();
+  if (typeof queueRender       === 'function') queueRender();
+  typeof wsToast === 'function' && wsToast(`📌 ${panel.tab?.icon||''} ${panel.tab?.name||'Окно'} [${_cgPin.idx+1}/${list.length}]`, 'info');
+};
+// Q/E hotkeys for pinned navigation
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+  if (e.code === 'KeyQ') window._cgNavigatePinned(-1);
+  if (e.code === 'KeyE') window._cgNavigatePinned(+1);
+});
+
+// ── Layout persistence (for online sync) ─────────────────────────
+function _saveCGLayout() {
+  const st = window.getBubbleState(); if (!st) return;
+  if (!st.cgWindows) st.cgWindows = {};
+  for (const bid in _cgW.worlds) {
+    const inst = _cgW.worlds[bid];
+    st.cgWindows[bid] = {
+      tabbed: !!inst.tabbed,
+      panels: inst.panels.map(p => ({ wx: p.wx, wy: p.wy, ww: p.ww, wh: p.wh })),
+    };
+  }
+  // Broadcast state update so observers see new layout
+  typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
+}
+
+window.restoreCGFromState = function() {
+  const st = window.getBubbleState(); if (!st?.cgWindows) return;
+  for (const bid in st.cgWindows) {
+    const layout = st.cgWindows[bid];
+    if (_cgW.worlds[bid]) continue; // already open
+    if (layout.tabbed) {
+      _createCGTabbed(bid);
+    } else {
+      window.createCGWorldForBubble(bid);
+    }
+    // Apply saved positions/sizes
+    const inst = _cgW.worlds[bid]; if (!inst) continue;
+    inst.panels.forEach((panel, i) => {
+      if (!layout.panels[i]) return;
+      panel.wx = layout.panels[i].wx; panel.wy = layout.panels[i].wy;
+      panel.ww = layout.panels[i].ww; panel.wh = layout.panels[i].wh;
+      if (panel.el) {
+        panel.el.style.width  = panel.ww + 'px';
+        panel.el.style.height = panel.wh + 'px';
+      }
+    });
+  }
+  if (Object.keys(_cgW.worlds).length > 0) { _startLoop(); _updatePositions(); }
+};
+
+// ── CG world bounds for camera system ────────────────────────────
+window.getCGWorldBounds = function() {
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  for (const bid in _cgW.worlds) {
+    _cgW.worlds[bid].panels.forEach(p => {
+      minX = Math.min(minX, p.wx); minY = Math.min(minY, p.wy);
+      maxX = Math.max(maxX, p.wx + p.ww); maxY = Math.max(maxY, p.wy + p.wh);
+    });
+  }
+  return maxX > minX ? { minX, minY, maxX, maxY } : null;
+};
+
+window.destroyCGWorld      = function(bid) { _destroyCGWorld(bid); };
+window.destroyAllCGWorlds  = function() { Object.keys(_cgW.worlds).forEach(_destroyCGWorld); };
 
 // ── Internal ─────────────────────────────────────────────────────
 function _destroyCGWorld(bubbleId) {
-  const inst = _cgW.worlds[bubbleId];
-  if (!inst) return;
-  inst.container.remove();
+  const inst = _cgW.worlds[bubbleId]; if (!inst) return;
+  inst.panels.forEach(p => p.el?.remove());
   delete _cgW.worlds[bubbleId];
+  // Remove from state so observers don't re-open it
+  const st = window.getBubbleState();
+  if (st?.cgWindows) { delete st.cgWindows[bubbleId]; }
+  typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
   if (Object.keys(_cgW.worlds).length === 0) {
-    cancelAnimationFrame(_cgW.rafId);
-    _cgW.rafId = null;
+    cancelAnimationFrame(_cgW.rafId); _cgW.rafId = null;
   }
 }
 
@@ -151,38 +386,91 @@ function _startLoop() {
 }
 
 function _updatePositions() {
-  const wc = window.worldContainer;
-  if (!wc) return;
-  const scale = wc.scale.x;
-  const camX  = wc.x;
-  const camY  = wc.y;
-  const st    = window.getBubbleState();
-
+  const wc = window.worldContainer; if (!wc) return;
+  const scale = wc.scale.x, camX = wc.x, camY = wc.y;
   for (const bid in _cgW.worlds) {
-    const inst = _cgW.worlds[bid];
-    // Track bubble if it moves
-    if (st) {
-      const b = st.bubbles?.[bid];
-      if (b) {
-        const totalW = 5 * CG_CFG.MINI_W + 4 * CG_CFG.GAP;
-        inst.startWX = b.x + b.size / 2 - totalW / 2;
-        inst.startWY = b.y + b.size + CG_CFG.OFFSET_Y;
-      }
-    }
-    const sx = inst.startWX * scale + camX;
-    const sy = inst.startWY * scale + camY;
-    // translate positions the container; scale makes content zoom with world
-    inst.container.style.transform = `translate(${sx}px,${sy}px) scale(${scale})`;
+    _cgW.worlds[bid].panels.forEach(panel => {
+      if (!panel.el) return;
+      panel.el.style.transform =
+        `translate(${panel.wx * scale + camX}px,${panel.wy * scale + camY}px) scale(${scale})`;
+    });
   }
 }
 
-// Legacy stub — kept so any lingering references don't crash
+// ── Drag (header) ────────────────────────────────────────────────
+function _makeDraggable(hdr, panel) {
+  let dragging = false, sx, sy, wx0, wy0;
+  hdr.addEventListener('pointerdown', e => {
+    if (e.target.tagName === 'BUTTON') return; // close, pin, tab buttons
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    dragging = true;
+    sx = e.clientX; sy = e.clientY; wx0 = panel.wx; wy0 = panel.wy;
+    hdr.style.cursor = 'grabbing';
+    hdr.setPointerCapture(e.pointerId);
+  });
+  hdr.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const wc = window.worldContainer; if (!wc) return;
+    const sc = wc.scale.x;
+    panel.wx = wx0 + (e.clientX - sx) / sc;
+    panel.wy = wy0 + (e.clientY - sy) / sc;
+    panel.el.style.transform =
+      `translate(${panel.wx*sc+wc.x}px,${panel.wy*sc+wc.y}px) scale(${sc})`;
+  });
+  const endDrag = e => {
+    if (!dragging) return;
+    dragging = false; hdr.style.cursor = 'grab';
+    hdr.releasePointerCapture(e.pointerId);
+    _saveCGLayout();
+  };
+  hdr.addEventListener('pointerup',     endDrag);
+  hdr.addEventListener('pointercancel', endDrag);
+}
+
+// ── Resize (◢ corner handle) ──────────────────────────────────────
+function _makeResizable(resizer, panel, panelEl) {
+  resizer.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    const wc = window.worldContainer; if (!wc) return;
+    const scale = wc.scale.x;
+    const ox = e.clientX, oy = e.clientY, ow = panel.ww, oh = panel.wh;
+    resizer.setPointerCapture(e.pointerId);
+    const onMove = me => {
+      panel.ww = Math.max(300, ow + (me.clientX - ox) / scale);
+      panel.wh = Math.max(200, oh + (me.clientY - oy) / scale);
+      panelEl.style.width  = panel.ww + 'px';
+      panelEl.style.height = panel.wh + 'px';
+    };
+    const onUp = () => {
+      resizer.removeEventListener('pointermove', onMove);
+      resizer.removeEventListener('pointerup',   onUp);
+      _saveCGLayout();
+    };
+    resizer.addEventListener('pointermove', onMove);
+    resizer.addEventListener('pointerup',   onUp);
+  });
+}
+
+// ── Wheel passthrough to pixi-canvas (for header/border area) ────
+function _forwardWheelToCanvas(e) {
+  const cv = document.getElementById('pixi-canvas'); if (!cv) return;
+  cv.dispatchEvent(new WheelEvent('wheel', {
+    bubbles: true, cancelable: true,
+    deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ, deltaMode: e.deltaMode,
+    clientX: e.clientX, clientY: e.clientY,
+    ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
+  }));
+}
+
+// ── Legacy stubs (kept for any lingering references) ─────────────
 window.createDefaultCGData = function() { return {}; };
 window.cgRenderCanvas      = function() {};
-window.broadcastCGUpdate   = function() {};
 window.cgOpenTab           = function() {};
+// NOTE: broadcastCGUpdate is intentionally NOT overridden here —
+// workspace_engine.js owns the functional Supabase broadcast version.
 
-// (legacy functions removed — CG is now rendered in world-positioned iframes)
+// (old canvas-based CG functions below are dead code — CG runs in iframes)
 function getDefaultUIKit() {
   return [
     { id:'atom_btn',    name:'Кнопка',    css:'background:#5e6ad2;color:#fff;padding:10px 24px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;',    html:'<button>Кнопка</button>',  js:'', group:'Базовые' },

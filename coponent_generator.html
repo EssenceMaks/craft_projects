@@ -1502,6 +1502,17 @@ renderSets();
   const t=new URLSearchParams(location.search).get('tab');
   if(t&&['1','2','3','4','5'].includes(t))switchTab(t);
 })();
+// Embed mode: hide cloud controls when loaded inside workspace iframe
+(function(){
+  const p=new URLSearchParams(location.search);
+  if(p.get('embed')==='1'){
+    const cb=document.getElementById('cloud-bar');
+    if(cb){
+      cb.innerHTML='<span style="font-size:10px;color:var(--mu);padding:0 10px;border-left:1px solid var(--bd);margin-left:auto;">🔒 в будущем: локальный онлайн</span>';
+      cb.style.marginLeft='auto';
+    }
+  }
+})();
 </script>
 
 <!-- ══ LOGIN MODAL ══════════════════════════════════════════ -->

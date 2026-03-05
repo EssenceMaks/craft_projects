@@ -445,7 +445,11 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
   <div class="form-group" id="prop-name-group"><label>Название</label><input type="text" id="prop-name"></div>
   <div id="main-bubble-props">
     <div class="form-group"><label>Форма</label><select id="prop-shape"><option value="circle">Круг</option><option value="square">Квадрат</option></select></div>
-    <div class="form-group"><label>Размер</label><input type="number" id="prop-size" min="100" max="800" step="10"></div>
+    <div class="form-group" id="prop-size-group"><label>Размер</label><input type="number" id="prop-size" min="50" max="2000" step="10"></div>
+    <div id="prop-wh-group" style="display:none;">
+      <div class="form-group row"><label>Ширина</label><input type="number" id="prop-width" min="50" max="4000" step="10" style="flex:1;"></div>
+      <div class="form-group row" style="margin-top:4px;"><label>Высота</label><input type="number" id="prop-height" min="50" max="4000" step="10" style="flex:1;"></div>
+    </div>
   </div>
   <div id="color-props">
     <div class="form-group row"><label>Фон (rgba)</label><input type="color" id="prop-bg-color-picker" style="max-width:30px;padding:0;border:none;background:transparent;cursor:pointer;"><input type="text" id="prop-bg-color" style="flex:1;"></div>

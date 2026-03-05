@@ -198,6 +198,8 @@ function _applySnap(snap) {
   window.syncGPUI && window.syncGPUI();
   window.selectEntity && window.selectEntity(null,null);
   window.queueRender && window.queueRender();
+  // Restore CG window layout for observers
+  setTimeout(() => { window.restoreCGFromState && window.restoreCGFromState(); }, 200);
 }
 function _restoreDraft() {
   try {

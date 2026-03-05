@@ -247,13 +247,14 @@ function getSceneBounds() {
     for (let id in state.bubbles) {
         let b = state.bubbles[id]; if (!b) continue;
         minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
-        maxX = Math.max(maxX, b.x + b.size); maxY = Math.max(maxY, b.y + b.size);
+        maxX = Math.max(maxX, b.x + _bW(b)); maxY = Math.max(maxY, b.y + _bH(b));
         hasObj = true;
     }
     for (let id in state.minis) {
         let m = getBC(id); if (!m) continue;
-        minX = Math.min(minX, m.x - 60); minY = Math.min(minY, m.y - 30);
-        maxX = Math.max(maxX, m.x + 60); maxY = Math.max(maxY, m.y + 30);
+        let hw = (m.rect?.width || 60) / 2, hh = (m.rect?.height || 30) / 2;
+        minX = Math.min(minX, m.x - hw); minY = Math.min(minY, m.y - hh);
+        maxX = Math.max(maxX, m.x + hw); maxY = Math.max(maxY, m.y + hh);
         hasObj = true;
     }
     for (let id in state.points) {
@@ -263,6 +264,15 @@ function getSceneBounds() {
         if (px != null && py != null) {
             minX = Math.min(minX, px); minY = Math.min(minY, py);
             maxX = Math.max(maxX, px); maxY = Math.max(maxY, py);
+            hasObj = true;
+        }
+    }
+    // Include open CG iframe panels in scene bounds
+    if (typeof window.getCGWorldBounds === 'function') {
+        const cgb = window.getCGWorldBounds();
+        if (cgb) {
+            minX = Math.min(minX, cgb.minX); minY = Math.min(minY, cgb.minY);
+            maxX = Math.max(maxX, cgb.maxX); maxY = Math.max(maxY, cgb.maxY);
             hasObj = true;
         }
     }
@@ -594,7 +604,9 @@ function gSymTex(sym, r, col) { let rSz = Math.max(4, Math.round(r)); let k = `s
 // Math
 function resolveCollisions(mid, vis = new Set()) { let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid); let mcx = mv.x + mv.size / 2, mcy = mv.y + mv.size / 2, mr = mv.size / 2; for (let id in state.bubbles) { if (id === mid) continue; let t = state.bubbles[id]; if (!t) continue; let tcx = t.x + t.size / 2, tcy = t.y + t.size / 2, tr = t.size / 2, dx = tcx - mcx, dy = tcy - mcy, d = Math.hypot(dx, dy), minD = mr + tr + 20; if (d < minD) { if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); } let a = Math.atan2(dy, dx), p = minD - d; t.x += Math.cos(a) * p; t.y += Math.sin(a) * p; t.x = Math.max(0, Math.min(innerWidth - t.size, t.x)); t.y = Math.max(0, Math.min(innerHeight - t.size, t.y)); resolveCollisions(id, vis); } } }
 
-function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; return { x: b.x + b.size / 2, y: b.y + b.size / 2, rect: { width: b.size, height: b.size } }; } if (state.minis[id]) { let m = state.minis[id], bx = 0, by = 0; if (m.parentId && state.bubbles[m.parentId]) { bx = state.bubbles[m.parentId].x; by = state.bubbles[m.parentId].y; } return { x: bx + m.x, y: by + m.y, rect: { width: 60, height: 30 } }; } return null; }
+const _bW = b => b.width  || b.size;
+const _bH = b => b.height || b.size;
+function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; let bw=_bW(b),bh=_bH(b); return { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; } if (state.minis[id]) { let m = state.minis[id], bx = 0, by = 0; if (m.parentId && state.bubbles[m.parentId]) { bx = state.bubbles[m.parentId].x; by = state.bubbles[m.parentId].y; } return { x: bx + m.x, y: by + m.y, rect: { width: m.width || 60, height: m.height || 30 } }; } return null; }
 
 function getEI(bid, c, tx, ty) { if (!c || !c.rect) return { x: 0, y: 0 }; let dx = tx - c.x, dy = ty - c.y; let isC = state.bubbles[bid] && state.bubbles[bid].shape === 'circle'; if (isC) { let r = c.rect.width / 2, d = Math.hypot(dx, dy); return d === 0 ? { x: c.x, y: c.y } : { x: c.x + (dx / d) * r, y: c.y + (dy / d) * r }; } let w2 = c.rect.width / 2, h2 = c.rect.height / 2, sx = dx ? Math.abs(w2 / dx) : Infinity, sy = dy ? Math.abs(h2 / dy) : Infinity, s = Math.min(sx, sy); return s > 1 ? { x: c.x, y: c.y } : { x: c.x + dx * s, y: c.y + dy * s }; }
 
@@ -733,7 +745,7 @@ function createBAP(pId) {
 function addLTL(linkId) { let l = state.links[linkId]; if (!l) return; if (!l.labels) l.labels = []; l.labels.push({ id: 'lbl_' + generateId(), text: 'Связь', type: 'callout', offset: 0.5 }); selectEntity('link', linkId); queueRender(); saveState(); }
 
 // Full rebuild after undo/redo
-function fullRebuild() { for (let id in pxB) { pxB[id].c.destroy({ children: true }); delete pxB[id]; } for (let id in pxM) { pxM[id].c.destroy({ children: true }); delete pxM[id]; } for (let id in pxL) { dLC(id); } for (let id in pxP) { pxP[id].g.destroy(); delete pxP[id]; } for (let id in partSys) { partSys[id].forEach(p => { if (p.sprite) p.sprite.destroy(); }); delete partSys[id]; } needsRender = true; }
+function fullRebuild() { for (let id in pxB) { if (pxB[id]._edgeTmr) { clearTimeout(pxB[id]._edgeTmr); pxB[id]._edgeTmr = null; } pxB[id].c.destroy({ children: true }); delete pxB[id]; } for (let id in pxM) { pxM[id].c.destroy({ children: true }); delete pxM[id]; } for (let id in pxL) { dLC(id); } for (let id in pxP) { pxP[id].g.destroy(); delete pxP[id]; } for (let id in partSys) { partSys[id].forEach(p => { if (p.sprite) p.sprite.destroy(); }); delete partSys[id]; } needsRender = true; }
 function dLC(id) { let c = pxL[id]; if (!c) return; c.bg.destroy(); c.glow.destroy(); c.l1.destroy(); c.l2.destroy(); c.hit.destroy({ children: true }); c.lblC.destroy({ children: true }); c.partC.destroy({ children: true }); delete pxL[id]; }
 
 // Line Creation Mode functions
@@ -898,9 +910,10 @@ app.stage.on('pointerup', e => {
         selectedBubbles.clear();
         for (let id in state.bubbles) {
             let b = state.bubbles[id]; if (!b) continue;
-            let scr = getScreenPt(b.x + b.size / 2, b.y + b.size / 2);
-            let bw = b.size * worldContainer.scale.x;
-            if (scr.x + bw / 2 > minX && scr.x - bw / 2 < maxX && scr.y + bw / 2 > minY && scr.y - bw / 2 < maxY) {
+            let bw = _bW(b), bh = _bH(b);
+            let scr = getScreenPt(b.x + bw / 2, b.y + bh / 2);
+            let sw = bw * worldContainer.scale.x, sh = bh * worldContainer.scale.y;
+            if (scr.x + sw/2 > minX && scr.x - sw/2 < maxX && scr.y + sh/2 > minY && scr.y - sh/2 < maxY) {
                 selectedBubbles.add(id);
             }
         }
@@ -935,6 +948,73 @@ app.stage.on('pointermove', e => {
 });
 
 
+// ── Bubble edge-resize helpers ───────────────────────────────────────────────
+const _EDGE = 14; // world-px threshold for edge detection
+function _bubEdgeCheck(e, bid, c, cache) {
+    if (dragState) return;
+    let bd = state.bubbles[bid]; if (!bd) return;
+    let mp = getMapPt(e);
+    let lx = mp.x - bd.x, ly = mp.y - bd.y;
+    let bw = _bW(bd), bh = _bH(bd), isC = bd.shape === 'circle';
+    let dir = null, cur = 'grab';
+    if (isC) {
+        let r = bd.size / 2, cx = r, cy = r;
+        let dist = Math.hypot(lx - cx, ly - cy);
+        if (dist >= r - _EDGE && dist <= r + _EDGE) { dir = 'radial'; cur = 'nwse-resize'; }
+    } else {
+        let nL = lx >= -_EDGE && lx <= _EDGE, nR = lx >= bw - _EDGE && lx <= bw + _EDGE;
+        let nT = ly >= -_EDGE && ly <= _EDGE, nB = ly >= bh - _EDGE && ly <= bh + _EDGE;
+        if (nR && nB) { dir='se'; cur='se-resize'; } else if (nL && nT) { dir='nw'; cur='nw-resize'; }
+        else if (nR && nT) { dir='ne'; cur='ne-resize'; } else if (nL && nB) { dir='sw'; cur='sw-resize'; }
+        else if (nR) { dir='e'; cur='e-resize'; } else if (nL) { dir='w'; cur='w-resize'; }
+        else if (nB) { dir='s'; cur='s-resize'; } else if (nT) { dir='n'; cur='n-resize'; }
+    }
+    if (dir) {
+        cache._resCur = cur;
+        if (!cache._edgeTmr) {
+            cache._edgeTmr = setTimeout(() => {
+                cache._edgeTmr = null;
+                if (!state.bubbles[bid]) return; // bubble deleted while timer ran
+                cache._resDir = dir; c.cursor = cur;
+            }, 2000);
+        }
+    } else {
+        _bubEdgeClear(c, cache);
+    }
+    if (cache._resDir) c.cursor = cache._resCur;
+}
+function _bubEdgeClear(c, cache) {
+    if (cache._edgeTmr) { clearTimeout(cache._edgeTmr); cache._edgeTmr = null; }
+    if (cache._resDir) { cache._resDir = null; c.cursor = 'grab'; }
+}
+function _bubStartResize(e, bd, cache, c) {
+    selectEntity('main', bd.id);
+    let mp = getMapPt(e);
+    let iX = bd.x, iY = bd.y, iW = _bW(bd), iH = _bH(bd), iS = bd.size;
+    let dir = cache._resDir;
+    c.cursor = 'grabbing';
+    const onM = me => {
+        let mpC = getMapPt(me), dx = mpC.x - mp.x, dy = mpC.y - mp.y;
+        if (bd.shape === 'circle') {
+            let cx = iX + iS / 2, cy = iY + iS / 2;
+            let newR = Math.max(30, Math.hypot(mpC.x - cx, mpC.y - cy));
+            bd.size = newR * 2; bd.x = cx - newR; bd.y = cy - newR;
+            bd.width = bd.size; bd.height = bd.size;
+        } else {
+            if (dir.includes('e')) { bd.width  = Math.max(60, iW + dx); }
+            if (dir.includes('w')) { bd.x = iX + dx; bd.width  = Math.max(60, iW - dx); }
+            if (dir.includes('s')) { bd.height = Math.max(60, iH + dy); }
+            if (dir.includes('n')) { bd.y = iY + dy; bd.height = Math.max(60, iH - dy); }
+        }
+        queueRender();
+    };
+    const onU = () => {
+        app.stage.off('pointermove', onM); app.stage.off('pointerup', onU); app.stage.off('pointerupoutside', onU);
+        c.cursor = cache._resCur; saveState();
+    };
+    app.stage.on('pointermove', onM); app.stage.on('pointerup', onU); app.stage.on('pointerupoutside', onU);
+}
+
 // Render Bubbles
 function renderBubbles() {
     let active = new Set(Object.keys(state.bubbles)); for (let id in pxB) { if (!active.has(id)) { pxB[id].c.destroy({ children: true }); delete pxB[id]; } }
@@ -945,13 +1025,18 @@ function renderBubbles() {
             let title = new PIXI.Text('', { fontFamily: 'Segoe UI', fontSize: 16, fontWeight: 'bold', fill: 0xffffff, align: 'center', wordWrap: true }); title.anchor.set(0.5, 0);
             let gear = new PIXI.Text('⚙️', { fontSize: 22 }); gear.anchor.set(0.5); gear.eventMode = 'static'; gear.cursor = 'pointer';
             gear.on('pointerdown', e => { e.stopPropagation(); if (ctxMenu) ctxMenu.style.display = 'none'; selectEntity('main', d.id, true); });
-            c.addChild(bg, brd, title, gear); layerBub.addChild(c); cache = { c, bg, brd, title, gear }; pxB[d.id] = cache;
+            c.addChild(bg, brd, title, gear); layerBub.addChild(c);
+            cache = { c, bg, brd, title, gear, _edgeTmr: null, _resDir: null, _resCur: 'grab' }; pxB[d.id] = cache;
+            c.on('pointermove', e => _bubEdgeCheck(e, d.id, c, cache));
+            c.on('pointerout', () => _bubEdgeClear(c, cache));
             c.on('pointerdown', e => {
                 if (ctxMenu) ctxMenu.style.display = 'none';
                 e.stopPropagation();
                 if (linkingMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLinking(pId); return; }
                 if (lineCreationMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLineSeqClick(pId); return; }
-                selectEntity('main', d.id); let bd = state.bubbles[d.id]; if (!bd) return;
+                let bd = state.bubbles[d.id]; if (!bd) return;
+                if (cache._resDir) { _bubStartResize(e, bd, cache, c); return; }
+                selectEntity('main', d.id);
                 let mpStart = getMapPt(e); let iX = bd.x, iY = bd.y; c.cursor = 'grabbing';
 
                 let isGroup = selectedBubbles.has(d.id);
@@ -984,7 +1069,7 @@ function renderBubbles() {
                 bm.onclick = ev => {
                     ev.stopPropagation(); ctxMenu.style.display = 'none';
                     let mid = 'mini_' + generateId();
-                    state.minis[mid] = { id: mid, name: 'Мини', parentId: d.id, x: d.size / 2, y: d.size / 2, bgColor: 'rgba(0,255,200,0.2)', borderColor: '#00ffcc', glowColor: '#00ffcc' };
+                    state.minis[mid] = { id: mid, name: 'Мини', parentId: d.id, x: _bW(d) / 2, y: _bH(d) / 2, bgColor: 'rgba(0,255,200,0.2)', borderColor: '#00ffcc', glowColor: '#00ffcc' };
                     queueRender(); selectEntity('mini', mid); saveState();
                 };
                 ctxMenu.appendChild(bm);
@@ -1006,22 +1091,26 @@ function renderBubbles() {
                 ctxMenu.style.left = e.global.x + 15 + 'px'; ctxMenu.style.top = e.global.y + 15 + 'px'; ctxMenu.style.display = 'flex';
             });
         }
-        let s = d.size, isC = d.shape === 'circle';
+        let bw = _bW(d), bh = _bH(d), isC = d.shape === 'circle';
+        let s = isC ? d.size : Math.max(bw, bh); // keep s for circle radius math
         cache.bg.clear(); cache.bg.beginFill(cHex(d.bgColor), cAlpha(d.bgColor));
-        if (isC) cache.bg.drawCircle(s / 2, s / 2, s / 2); else cache.bg.drawRoundedRect(0, 0, s, s, 20); cache.bg.endFill();
+        if (isC) cache.bg.drawCircle(s/2, s/2, s/2); else cache.bg.drawRoundedRect(0, 0, bw, bh, 20); cache.bg.endFill();
         // Glow
-        cache.bg.beginFill(cHex(d.glowColor), 0.08); if (isC) cache.bg.drawCircle(s / 2, s / 2, s / 2 + 15); else cache.bg.drawRoundedRect(-15, -15, s + 30, s + 30, 35); cache.bg.endFill();
+        cache.bg.beginFill(cHex(d.glowColor), 0.08);
+        if (isC) cache.bg.drawCircle(s/2, s/2, s/2+15); else cache.bg.drawRoundedRect(-15,-15,bw+30,bh+30,35);
+        cache.bg.endFill();
         cache.brd.clear(); cache.brd.lineStyle(2, cHex(d.borderColor), 1);
-        if (isC) cache.brd.drawCircle(s / 2, s / 2, s / 2); else cache.brd.drawRoundedRect(0, 0, s, s, 20);
+        if (isC) cache.brd.drawCircle(s/2, s/2, s/2); else cache.brd.drawRoundedRect(0, 0, bw, bh, 20);
 
         let isSel = (selectedEntity && selectedEntity.id === d.id && selectedEntity.type === 'main') || selectedBubbles.has(d.id);
         if (isSel) {
             cache.brd.lineStyle(2, 0xffffff, selectedBubbles.has(d.id) ? 1.0 : 0.7);
-            if (isC) cache.brd.drawCircle(s / 2, s / 2, s / 2 + 5);
-            else cache.brd.drawRoundedRect(-5, -5, s + 10, s + 10, 24);
+            if (isC) cache.brd.drawCircle(s/2, s/2, s/2+5);
+            else cache.brd.drawRoundedRect(-5, -5, bw+10, bh+10, 24);
         }
-        cache.title.text = d.name || ''; cache.title.style.wordWrapWidth = s - 40; cache.title.position.set(s / 2, 20);
-        let gx = isC ? s / 2 + (s / 2) * 0.707 - 18 : s - 25; let gy = isC ? s / 2 - (s / 2) * 0.707 + 18 : 25;
+        cache.title.text = d.name || ''; cache.title.style.wordWrapWidth = (isC?s:bw) - 40; cache.title.position.set((isC?s:bw)/2, 20);
+        let gx = isC ? s/2 + (s/2)*0.707 - 18 : bw - 25;
+        let gy = isC ? s/2 - (s/2)*0.707 + 18 : 25;
         cache.gear.position.set(gx, gy);
         cache.c.position.set(d.x, d.y);
     });
@@ -1804,7 +1893,9 @@ app.ticker.add(delta => {
 // Properties Panel
 function gP(id) { return document.getElementById(id); }
 const P = {
-    nameGrp: gP('prop-name-group'), name: gP('prop-name'), shape: gP('prop-shape'), size: gP('prop-size'),
+    nameGrp: gP('prop-name-group'), name: gP('prop-name'), shape: gP('prop-shape'),
+    size: gP('prop-size'), szGrp: gP('prop-size-group'), whGrp: gP('prop-wh-group'),
+    width: gP('prop-width'), height: gP('prop-height'),
     bg: gP('prop-bg-color'), border: gP('prop-border-color'), glow: gP('prop-glow-color'),
     lUG: gP('prop-link-use-global'), lType: gP('prop-link-type'), lMode: gP('prop-link-mode'), gap: gP('prop-link-gap'),
     bgHas: gP('prop-link-hasbg'), bgCol: gP('prop-link-bgcol'), bgWid: gP('prop-link-bgwid'),
@@ -1856,7 +1947,17 @@ function selectEntity(type, id, showPanel = false) {
     gP('main-bubble-props').style.display = type === 'main' ? 'block' : 'none'; gP('color-props').style.display = (type === 'main' || type === 'mini') ? 'block' : 'none';
     gP('link-props').style.display = type === 'link' ? 'block' : 'none'; gP('entity-actions').style.display = type === 'link' ? 'none' : 'flex';
     P.nameGrp.style.display = type === 'link' ? 'none' : 'flex';
-    if (type === 'main') { let b = state.bubbles[id]; if (b) { if (P.name) P.name.value = b.name || ''; if (P.shape) P.shape.value = b.shape || 'circle'; if (P.size) P.size.value = b.size || 200; if (P.bg) { P.bg.value = b.bgColor || ''; let m = (b.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (m) gP('prop-bg-color-picker').value = '#' + (+m[1]).toString(16).padStart(2, '0') + (+m[2]).toString(16).padStart(2, '0') + (+m[3]).toString(16).padStart(2, '0'); } if (P.border) P.border.value = b.borderColor || ''; if (P.glow) P.glow.value = b.glowColor || ''; } }
+    if (type === 'main') { let b = state.bubbles[id]; if (b) {
+        if (P.name) P.name.value = b.name || '';
+        if (P.shape) P.shape.value = b.shape || 'circle';
+        let isC = b.shape === 'circle';
+        if (P.szGrp) P.szGrp.style.display = isC ? '' : 'none';
+        if (P.whGrp) P.whGrp.style.display = isC ? 'none' : '';
+        if (P.size) P.size.value = b.size || 200;
+        if (P.width) P.width.value = _bW(b);
+        if (P.height) P.height.value = _bH(b);
+        if (P.bg) { P.bg.value = b.bgColor || ''; let m = (b.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (m) gP('prop-bg-color-picker').value = '#' + (+m[1]).toString(16).padStart(2, '0') + (+m[2]).toString(16).padStart(2, '0') + (+m[3]).toString(16).padStart(2, '0'); }
+        if (P.border) P.border.value = b.borderColor || ''; if (P.glow) P.glow.value = b.glowColor || ''; } }
     else if (type === 'mini') { let m = state.minis[id]; if (m) { if (P.name) P.name.value = m.name || ''; if (P.bg) { P.bg.value = m.bgColor || ''; let x = (m.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (x) gP('prop-bg-color-picker').value = '#' + (+x[1]).toString(16).padStart(2, '0') + (+x[2]).toString(16).padStart(2, '0') + (+x[3]).toString(16).padStart(2, '0'); } if (P.border) P.border.value = m.borderColor || ''; if (P.glow) P.glow.value = m.glowColor || ''; } }
     else if (type === 'link') {
         let l = state.links[id]; if (!l) return;
@@ -1893,6 +1994,18 @@ function U(key, value, fin) {
     else if (selectedEntity.type === 'link') target = state.links[selectedEntity.id];
     if (target && typeof target === 'object') {
         target[key] = value;
+        if (selectedEntity.type === 'main') {
+            if (key === 'shape') {
+                let isC = value === 'circle';
+                if (P.szGrp) P.szGrp.style.display = isC ? '' : 'none';
+                if (P.whGrp) P.whGrp.style.display = isC ? 'none' : '';
+                if (!isC && !target.width)  { target.width  = target.size; if (P.width)  P.width.value  = target.width; }
+                if (!isC && !target.height) { target.height = target.size; if (P.height) P.height.value = target.height; }
+            }
+            if (key === 'size' && target.shape === 'circle') {
+                target.width = value; target.height = value;
+            }
+        }
         if (selectedEntity.type === 'link') {
             if (key === 'useGlobalAnim' || key === 'animType1') uLUI(1, target.animType1 || 'none', target.useGlobalAnim !== false);
             if (key === 'useGlobalAnim' || key === 'animType2') uLUI(2, target.animType2 || 'none', target.useGlobalAnim !== false);
@@ -1917,7 +2030,11 @@ if (qgm) { qgm.value = state.globalAnimConfig.mode || 'pixi_dash'; qgm.onchange 
 
 // Link prop binds
 bC(P.lUG, 'useGlobalAnim'); bC(gP('prop-link-hidelines'), 'hideLines');
-bI(P.name, 'name'); bI(P.shape, 'shape'); bI(P.size, 'size', parseInt);
+bI(P.name, 'name');
+bI(P.shape, 'shape');
+bI(P.size, 'size', parseInt);
+bI(P.width, 'width', parseInt);
+bI(P.height, 'height', parseInt);
 bI(P.bg, 'bgColor'); bI(P.border, 'borderColor'); bI(P.glow, 'glowColor');
 bI(P.lType, 'type'); bI(P.lMode, 'lineMode'); bI(P.gap, 'gap', parseInt);
 bC(P.bgHas, 'hasBg'); bI(P.bgCol, 'bgColor'); bI(P.bgWid, 'bgWidth', parseInt);
@@ -1963,7 +2080,7 @@ if (bam) bam.onclick = () => {
 let bami = document.getElementById('btn-add-mini');
 if (bami) bami.onclick = () => {
     if (!selectedEntity || selectedEntity.type !== 'main') return alert('Сначала выделите Главный Бабл'); let id = 'mini_' + generateId(), b = state.bubbles[selectedEntity.id];
-    if (b) { state.minis[id] = { id, name: 'Мини', parentId: b.id, x: b.size / 2, y: b.size / 2, bgColor: 'rgba(0,255,200,0.2)', borderColor: '#00ffcc', glowColor: '#00ffcc' }; queueRender(); selectEntity('mini', id); saveState(); }
+    if (b) { state.minis[id] = { id, name: 'Мини', parentId: b.id, x: _bW(b) / 2, y: _bH(b) / 2, bgColor: 'rgba(0,255,200,0.2)', borderColor: '#00ffcc', glowColor: '#00ffcc' }; queueRender(); selectEntity('mini', id); saveState(); }
 };
 
 // Toolbar: Delete
@@ -2259,7 +2376,7 @@ function renderMinimap() {
         let b = state.bubbles[id]; if (!b) continue;
         hasBubbles = true;
         minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
-        maxX = Math.max(maxX, b.x + b.size); maxY = Math.max(maxY, b.y + b.size);
+        maxX = Math.max(maxX, b.x + _bW(b)); maxY = Math.max(maxY, b.y + _bH(b));
     }
     for (let id in state.points) {
         let p = state.points[id]; if (!p) continue;
@@ -2286,8 +2403,9 @@ function renderMinimap() {
     minimapCtx.fillStyle = 'rgba(255,0,100,0.5)';
     for (let id in state.bubbles) {
         let b = state.bubbles[id]; if (!b) continue;
+        let bbw = _bW(b), bbh = _bH(b);
         let nx = ((b.x - minX) / bw) * w, ny = ((b.y - minY) / bh) * h;
-        let nw = (b.size / bw) * w, nh = (b.size / bh) * h;
+        let nw = (bbw / bw) * w, nh = (bbh / bh) * h;
         if (b.shape === 'circle') {
             minimapCtx.beginPath();
             minimapCtx.arc(nx + nw / 2, ny + nh / 2, nw / 2, 0, Math.PI * 2);
