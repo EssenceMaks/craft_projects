@@ -1,0 +1,304 @@
+{
+  "state": {
+    "bubbles": {
+      "main__dxxybuym4": {
+        "id": "main__dxxybuym4",
+        "name": "Бабл",
+        "x": -57,
+        "y": 87.99999999999997,
+        "size": 200,
+        "shape": "circle",
+        "bgColor": "rgba(255,0,100,0.1)",
+        "borderColor": "#ff0066",
+        "glowColor": "#ff0066"
+      },
+      "main__3hz2zu8tg": {
+        "id": "main__3hz2zu8tg",
+        "name": "Бабл",
+        "x": 1215,
+        "y": 533,
+        "size": 200,
+        "shape": "circle",
+        "bgColor": "rgba(255,0,100,0.1)",
+        "borderColor": "#ff0066",
+        "glowColor": "#ff0066"
+      },
+      "main__burja1i42": {
+        "id": "main__burja1i42",
+        "name": "Бабл",
+        "x": -16,
+        "y": 897,
+        "size": 200,
+        "shape": "circle",
+        "bgColor": "rgba(255,0,100,0.1)",
+        "borderColor": "#ff0066",
+        "glowColor": "#ff0066"
+      }
+    },
+    "minis": {},
+    "links": {
+      "link__jwoy5kiwn": {
+        "id": "link__jwoy5kiwn",
+        "from": "p__5xifq9af1",
+        "to": "p__pnwsrugrt",
+        "labels": [],
+        "type": "sharp",
+        "lineMode": "single",
+        "gap": 10,
+        "waypoints": [
+          "p__4nmdog87d",
+          "p__381aid40p",
+          "p__xqxh5xeyd",
+          "p__wkw72e8nc",
+          "p__sbfmpnkbo",
+          "p__o6otgsadb",
+          "p__tawhdjigi",
+          "p__63qw10nts",
+          "p__ncwiokb2w",
+          "p__f7ipbb958",
+          "p__8wrc625oa",
+          "p__f9uy44fws",
+          "p__m3cg9ln2e",
+          "p__huf8w2gad",
+          "p__vn2o0l5ff",
+          "p__8uw0aad8z",
+          "p__sbwsvr0z3",
+          "p__cjhdz8tjy",
+          "p__6nf1ivajd",
+          "p__s048x2p43",
+          "p__6nf1ivajd",
+          "p__xbsl42eb8",
+          "p__6nf1ivajd",
+          "p__4nmdog87d",
+          "p__kb989zkgh"
+        ],
+        "hasGlow": true,
+        "glowOpacity": 0.3,
+        "hasBg": false,
+        "bgColor": "rgba(255,255,255,0.1)",
+        "bgWidth": 20,
+        "color1": "#00ffcc",
+        "width1": 2,
+        "animType1": "pixi_symbols",
+        "speed1": 5,
+        "color2": "#ff00ff",
+        "width2": 2,
+        "animType2": "pixi_symbols",
+        "speed2": 5,
+        "useGlobalAnim": true,
+        "hideLines": false
+      }
+    },
+    "points": {
+      "p__5xifq9af1": {
+        "x": 460.52039353551237,
+        "y": 303.1490015670419,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 460.52039353551237,
+        "_renderedY": 303.1490015670419
+      },
+      "p__4nmdog87d": {
+        "x": 933.3344018903098,
+        "y": 300.6001389883098,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 933.3344018903098,
+        "_renderedY": 300.6001389883098
+      },
+      "p__381aid40p": {
+        "x": 1393.0856935366742,
+        "y": 282.06514161220053,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 1393.0856935366742,
+        "_renderedY": 282.06514161220053
+      },
+      "p__xqxh5xeyd": {
+        "attachedTo": "main__3hz2zu8tg",
+        "angle": null,
+        "_renderedX": 1315,
+        "_renderedY": 633
+      },
+      "p__wkw72e8nc": {
+        "x": 917.5986928104577,
+        "y": 880.6998547567175,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 917.5986928104577,
+        "_renderedY": 880.6998547567175
+      },
+      "p__sbfmpnkbo": {
+        "x": 298.43936092955727,
+        "y": 1062.0006535947712,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 298.43936092955727,
+        "_renderedY": 1062.0006535947712
+      },
+      "p__o6otgsadb": {
+        "attachedTo": "main__burja1i42",
+        "angle": null,
+        "_renderedX": 84,
+        "_renderedY": 997
+      },
+      "p__tawhdjigi": {
+        "x": -82.97647058823496,
+        "y": 824.2571532316631,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": -82.97647058823496,
+        "_renderedY": 824.2571532316631
+      },
+      "p__63qw10nts": {
+        "attachedTo": "main__dxxybuym4",
+        "angle": null,
+        "_renderedX": 43,
+        "_renderedY": 187.99999999999997
+      },
+      "p__ncwiokb2w": {
+        "x": 428.4286129266524,
+        "y": 157.2070442992013,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 428.4286129266524,
+        "_renderedY": 157.2070442992013
+      },
+      "p__f7ipbb958": {
+        "x": 329.22628903413244,
+        "y": 658.349818445897,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 329.22628903413244,
+        "_renderedY": 658.349818445897
+      },
+      "p__8wrc625oa": {
+        "x": 558.4178649237475,
+        "y": 837.9402323892521,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 558.4178649237475,
+        "_renderedY": 837.9402323892521
+      },
+      "p__f9uy44fws": {
+        "x": 955.2271604938273,
+        "y": 661.7705882352942,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 955.2271604938273,
+        "_renderedY": 661.7705882352942
+      },
+      "p__m3cg9ln2e": {
+        "x": 898.7844589687729,
+        "y": 473.628249818446,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 898.7844589687729,
+        "_renderedY": 473.628249818446
+      },
+      "p__huf8w2gad": {
+        "x": 666.1721132897605,
+        "y": 521.5190268700073,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 666.1721132897605,
+        "_renderedY": 521.5190268700073
+      },
+      "p__vn2o0l5ff": {
+        "x": 450.6636165577345,
+        "y": 584.8032679738564,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 450.6636165577345,
+        "_renderedY": 584.8032679738564
+      },
+      "p__xbsl42eb8": {
+        "x": 493.6556070590292,
+        "y": 518.5278894699011,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 493.6556070590292,
+        "_renderedY": 518.5278894699011
+      },
+      "p__sbwsvr0z3": {
+        "x": 500.2647785039945,
+        "y": -18.962599854756554,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 500.2647785039945,
+        "_renderedY": -18.962599854756554
+      },
+      "p__6nf1ivajd": {
+        "x": 670.8015562809073,
+        "y": 429.31769921427895,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 670.8015562809073,
+        "_renderedY": 429.31769921427895
+      },
+      "p__s048x2p43": {
+        "x": 686.0947317532997,
+        "y": 71.20250690242429,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 686.0947317532997,
+        "_renderedY": 71.20250690242429
+      },
+      "p__8uw0aad8z": {
+        "x": 418.46416098643334,
+        "y": 434.4154243717431,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 418.46416098643334,
+        "_renderedY": 434.4154243717431
+      },
+      "p__kb989zkgh": {
+        "x": 921.8645202860155,
+        "y": 27.871843063979238,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 921.8645202860155,
+        "_renderedY": 27.871843063979238
+      },
+      "p__pnwsrugrt": {
+        "x": 744.7185710641371,
+        "y": 179.5291664985369,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 744.7185710641371,
+        "_renderedY": 179.5291664985369
+      },
+      "p__cjhdz8tjy": {
+        "x": 543.3584273443043,
+        "y": 97.96556397911094,
+        "attachedTo": null,
+        "angle": null,
+        "_renderedX": 543.3584273443043,
+        "_renderedY": 97.96556397911094
+      }
+    },
+    "globalAnimConfig": {
+      "mode": "pixi_symbols",
+      "shape": "drop",
+      "size": 2.1,
+      "count": 0.7,
+      "wobble": 0,
+      "emojis": "🐅",
+      "hideLines": false,
+      "ecoMode": false,
+      "hasGlow": true,
+      "speed": 550
+    },
+    "animationMode": "play"
+  },
+  "camera": {
+    "x": 254.1730035475967,
+    "y": 168.51480578092549,
+    "scale": 0.9745250455516463
+  },
+  "minimap": {
+    "visible": true,
+    "state": 1,
+    "minimized": false
+  }
+}
