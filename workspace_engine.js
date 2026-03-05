@@ -24,14 +24,10 @@ window.initWorkspace = function() {
   window._cgContextMenuHook = (bubbleId, ctxEl) => {
     const sep = document.createElement('div'); sep.className = 'ctx-sep'; ctxEl.appendChild(sep);
     const btn = document.createElement('div'); btn.className = 'ctx-btn accent';
-    const hasCG = Object.values(window.getBubbleState()?.minis||{}).some(m=>m.cgTab&&m.parentId===bubbleId);
-    btn.textContent = hasCG ? '🧩 CG: открыть панели' : '🧩 Создать окна CG';
-    btn.onclick = ev => { ev.stopPropagation(); ctxEl.style.display='none'; hasCG ? _openAllCGPanels(bubbleId) : createCGWindows(bubbleId); };
+    btn.textContent = '🧩 Создать окна CG';
+    btn.onclick = ev => { ev.stopPropagation(); ctxEl.style.display='none'; createCGWindows(bubbleId); };
     ctxEl.appendChild(btn);
   };
-
-  // Hook mini pointerdown to open CG panel
-  _patchSelectEntityForCG();
 
   // Cloud/Supabase init
   if (typeof supabase !== 'undefined' && typeof SUPA_URL !== 'undefined') {
@@ -66,7 +62,6 @@ window.initWorkspace = function() {
 
   buildLoginModal();
   _restoreSession();
-  initCGPanelDrags();
 };
 
 // ── AUTH ───────────────────────────────────────────────────────
@@ -454,71 +449,13 @@ window.wsToast = function(msg,type='info'){
   clearTimeout(t._t);t._t=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateY(12px)';},3500);
 };
 
-// ── CG PANELS ─────────────────────────────────────────────────
-const CG_TABS=[
-  {idx:1,name:'UI Kit',icon:'🎨'},{idx:2,name:'Наборы',icon:'📦'},
-  {idx:3,name:'Сборка',icon:'🔧'},{idx:4,name:'Экспорт',icon:'📤'},{idx:5,name:'Галерея',icon:'🖼'},
-];
-
-window.createCGWindows = function(bubbleId){
-  const st=window.getBubbleState();const b=st?.bubbles?.[bubbleId];if(!b)return;
-  if (!st.cgData) st.cgData={};
-  st.cgData[bubbleId]=typeof createDefaultCGData==='function'?createDefaultCGData():{items:[],connections:[],uiKit:[],sets:[],comps:[],selId:null,selIds:[],selIsCopy:false,selConnId:null};
-  // Remove old CG minis for this bubble
-  for (const id in (st.minis||{})){const m=st.minis[id];if(m?.cgTab&&m?.parentId===bubbleId)delete st.minis[id];}
-  // Create 5 CG tab minis
-  const pos=[{x:b.size*.1,y:b.size*.08},{x:b.size*.55,y:b.size*.08},{x:b.size*.1,y:b.size*.42},{x:b.size*.55,y:b.size*.55},{x:b.size*.1,y:b.size*.75}];
-  CG_TABS.forEach((tab,i)=>{
-    const id='cgmini_'+bubbleId+'_'+tab.idx;
-    st.minis[id]={id,name:tab.icon+' '+tab.name,parentId:bubbleId,x:pos[i].x,y:pos[i].y,bgColor:'rgba(139,92,246,0.15)',borderColor:'#8b5cf6',glowColor:'#8b5cf6',cgTab:tab.idx,cgBubbleId:bubbleId};
-  });
-  window.clearBubblePartSys&&window.clearBubblePartSys();window.fullRebuild&&window.fullRebuild();window.queueRender&&window.queueRender();window.saveState&&window.saveState();broadcastCanvasUpdate();
-  wsToast('🧩 CG окна созданы','success');
+// ── CG WORLD (delegates to workspace_cg.js) ───────────────────
+window.createCGWindows = function(bubbleId) {
+  if (typeof window.createCGWorldForBubble === 'function') {
+    window.createCGWorldForBubble(bubbleId);
+  }
 };
 
-window.openCGPanel = function(bubbleId,tabIdx){
-  SC.activeCgBubbleId=bubbleId;
-  const st=window.getBubbleState();if (!st)return;
-  if (!st.cgData) st.cgData={};
-  if (!st.cgData[bubbleId]&&typeof createDefaultCGData==='function') st.cgData[bubbleId]=createDefaultCGData();
-  const panel=document.getElementById('cg-panel-'+tabIdx);if(!panel)return;
-  panel.classList.add('active');
-  // Update context label
-  const b=st.bubbles?.[bubbleId];const ctxEl=document.getElementById('cg-p'+tabIdx+'-ctx');
-  if (ctxEl&&b) ctxEl.textContent='('+b.name+')';
-  if (typeof cgOpenTab==='function') cgOpenTab(bubbleId,tabIdx);
-};
-
-function _openAllCGPanels(bubbleId){CG_TABS.forEach(t=>openCGPanel(bubbleId,t.idx));}
-
-window.closeCGPanel = function(tabIdx){
-  document.getElementById('cg-panel-'+tabIdx)?.classList.remove('active');
-};
-
-function initCGPanelDrags(){
-  document.querySelectorAll('.cg-panel').forEach(panel=>{
-    const hdr=panel.querySelector('.cg-panel-header');if(!hdr)return;
-    let dragging=false,sx=0,sy=0,ox=0,oy=0;
-    hdr.addEventListener('pointerdown',e=>{
-      if (e.target.closest('.cg-panel-close,.cg-tb-btn'))return;
-      dragging=true;sx=e.clientX;sy=e.clientY;const r=panel.getBoundingClientRect();
-      ox=r.left;oy=r.top;panel.style.right='auto';panel.style.bottom='auto';
-      panel.style.left=ox+'px';panel.style.top=oy+'px';panel.style.transform='none';
-      e.preventDefault();
-    });
-    document.addEventListener('pointermove',e=>{if(!dragging)return;panel.style.left=(ox+e.clientX-sx)+'px';panel.style.top=Math.max(45,oy+e.clientY-sy)+'px';});
-    document.addEventListener('pointerup',()=>{dragging=false;});
-  });
-}
-
-// Intercept selectEntity for CG tab minis
-function _patchSelectEntityForCG(){
-  const orig=window.selectEntity;
-  window.selectEntity=function(type,id,...args){
-    if (orig) orig.call(this,type,id,...args);
-    if (type==='mini'&&id){
-      const st=window.getBubbleState();const m=st?.minis?.[id];
-      if (m?.cgTab&&m?.cgBubbleId) openCGPanel(m.cgBubbleId,m.cgTab);
-    }
-  };
-}
+// Stubs kept to avoid errors from any old HTML onclick references
+window.openCGPanel  = function() {};
+window.closeCGPanel = function() {};

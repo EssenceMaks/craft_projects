@@ -1043,8 +1043,7 @@ function renderMinis() {
                 if (linkingMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLinking(pId); return; }
                 if (lineCreationMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLineSeqClick(pId); return; }
                 selectEntity('mini', d.id);
-                // CG tab mini hook — fires openCGPanel when it's a CG tab mini
-                if (d.cgTab && d.cgBubbleId && typeof window.openCGPanel === 'function') { window.openCGPanel(d.cgBubbleId, d.cgTab); }
+                // CG world is opened via right-click context menu (createCGWindows)
                 let pos = getBC(d.id); if (!pos) return; let mpStart = getMapPt(e); let offX = mpStart.x - pos.x, offY = mpStart.y - pos.y; c.cursor = 'grabbing';
                 const onM = me => { let mpCurr = getMapPt(me); let gX = mpCurr.x - offX, gY = mpCurr.y - offY; if (d.parentId && state.bubbles[d.parentId]) { d.x = gX - state.bubbles[d.parentId].x; d.y = gY - state.bubbles[d.parentId].y; } else { d.x = gX; d.y = gY; } queueRender(); };
                 const onU = me => {

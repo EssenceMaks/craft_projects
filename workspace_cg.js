@@ -1,19 +1,188 @@
 'use strict';
 // ════════════════════════════════════════════════════════════════
-// WORKSPACE CG — Component Generator tab rendering
-// All functions operate on state.cgData[activeCgBubbleId]
+// WORKSPACE CG — World-positioned iframe panels
+// Each "Создать окна CG" spawns 5 iframes loading coponent_generator.html?tab=N
+// positioned in PixiJS world-space, tracking camera via rAF + CSS transform.
 // ════════════════════════════════════════════════════════════════
 
-// ── Default state ──────────────────────────────────────────────
-window.createDefaultCGData = function() {
-  return {
-    items: [], connections: [],
-    uiKit: getDefaultUIKit(),
-    sets: [], comps: [],
-    selId: null, selIds: [], selIsCopy: false, selConnId: null
-  };
+// ── Config ──────────────────────────────────────────────────────
+const CG_CFG = {
+  MINI_W:   1200,   // each panel width  (world-px)
+  MINI_H:   1000,   // each panel height (world-px)
+  HEADER_H: 36,     // panel header height (always in CSS px, not scaled)
+  GAP:      24,     // gap between panels (world-px)
+  OFFSET_Y: 60,     // distance below parent bubble (world-px)
 };
 
+const CG_DEFS = [
+  { idx:1, icon:'🎨', name:'UI Kit',   color:'#8b5cf6' },
+  { idx:2, icon:'📦', name:'Наборы',   color:'#3b82f6' },
+  { idx:3, icon:'🔧', name:'Сборка',   color:'#10b981' },
+  { idx:4, icon:'📤', name:'Экспорт',  color:'#f59e0b' },
+  { idx:5, icon:'🖼', name:'Галерея',  color:'#ec4899' },
+];
+
+// ── State ────────────────────────────────────────────────────────
+const _cgW = {
+  worlds: {},   // bubbleId → { container, bubbleId }
+  rafId:  null,
+};
+
+// ── Public API ───────────────────────────────────────────────────
+window.createCGWorldForBubble = function(bubbleId) {
+  const st = window.getBubbleState();
+  if (!st) return;
+  const b = st.bubbles?.[bubbleId];
+  if (!b) return;
+
+  // Tear down previous world for this bubble if any
+  _destroyCGWorld(bubbleId);
+
+  const totalW = 5 * CG_CFG.MINI_W + 4 * CG_CFG.GAP;
+
+  // Compute world-space anchor (below & centered on bubble)
+  const startWX = b.x + b.size / 2 - totalW / 2;
+  const startWY = b.y + b.size + CG_CFG.OFFSET_Y;
+
+  // Layer above canvas (pointer-events passthrough except on panels)
+  const layer = _getLayer();
+
+  // ── Outer flex wrapper ──────────────────────────────────────
+  const container = document.createElement('div');
+  container.className  = 'cgw-wrap';
+  container.dataset.bid = bubbleId;
+  // Natural size = total world px; transform moves+scales it each frame
+  container.style.cssText =
+    `position:absolute;left:0;top:0;` +
+    `width:${totalW}px;height:${CG_CFG.MINI_H}px;` +
+    `transform-origin:0 0;` +
+    `display:flex;gap:${CG_CFG.GAP}px;` +
+    `pointer-events:none;`;
+
+  CG_DEFS.forEach((tab, _i) => {
+    // ── Panel ─────────────────────────────────────────────────
+    const panel = document.createElement('div');
+    panel.style.cssText =
+      `display:flex;flex-direction:column;` +
+      `width:${CG_CFG.MINI_W}px;height:${CG_CFG.MINI_H}px;flex-shrink:0;` +
+      `border-radius:14px;overflow:hidden;` +
+      `border:2px solid ${tab.color}55;` +
+      `box-shadow:0 16px 56px rgba(0,0,0,.75);` +
+      `background:#0b0d17;pointer-events:auto;`;
+
+    // ── Header ────────────────────────────────────────────────
+    const hdr = document.createElement('div');
+    hdr.style.cssText =
+      `height:${CG_CFG.HEADER_H}px;flex-shrink:0;` +
+      `background:${tab.color}1a;border-bottom:1px solid ${tab.color}44;` +
+      `display:flex;align-items:center;justify-content:space-between;` +
+      `padding:0 14px;user-select:none;cursor:default;`;
+    hdr.innerHTML =
+      `<span style="font-size:13px;font-weight:700;color:${tab.color};">${tab.icon} ${tab.name}</span>` +
+      `<button data-close="${bubbleId}" ` +
+        `style="background:none;border:none;color:#7a8599;cursor:pointer;` +
+               `font-size:16px;line-height:1;padding:2px 6px;border-radius:4px;" ` +
+        `title="Закрыть мир CG">✕</button>`;
+
+    // ── iframe ────────────────────────────────────────────────
+    const iframe = document.createElement('iframe');
+    iframe.src = `coponent_generator.html?tab=${tab.idx}`;
+    iframe.style.cssText =
+      `flex:1;border:none;width:100%;display:block;`;
+    iframe.setAttribute('sandbox',
+      'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
+    iframe.setAttribute('loading', 'lazy');
+
+    panel.appendChild(hdr);
+    panel.appendChild(iframe);
+    container.appendChild(panel);
+  });
+
+  // Close button handler (delegated)
+  container.addEventListener('click', e => {
+    if (e.target.dataset.close) _destroyCGWorld(e.target.dataset.close);
+  });
+
+  layer.appendChild(container);
+  _cgW.worlds[bubbleId] = { container, bubbleId, startWX, startWY };
+
+  _startLoop();
+  _updatePositions();
+
+  typeof wsToast === 'function' &&
+    wsToast('🧩 CG мир открыт — пан/зум для навигации по вкладкам', 'success');
+};
+
+window.destroyCGWorld = function(bubbleId) { _destroyCGWorld(bubbleId); };
+
+window.destroyAllCGWorlds = function() {
+  Object.keys(_cgW.worlds).forEach(_destroyCGWorld);
+};
+
+// ── Internal ─────────────────────────────────────────────────────
+function _destroyCGWorld(bubbleId) {
+  const inst = _cgW.worlds[bubbleId];
+  if (!inst) return;
+  inst.container.remove();
+  delete _cgW.worlds[bubbleId];
+  if (Object.keys(_cgW.worlds).length === 0) {
+    cancelAnimationFrame(_cgW.rafId);
+    _cgW.rafId = null;
+  }
+}
+
+function _getLayer() {
+  let el = document.getElementById('cg-world-layer');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'cg-world-layer';
+    el.style.cssText =
+      'position:fixed;top:0;left:0;width:0;height:0;' +
+      'pointer-events:none;z-index:50;overflow:visible;';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function _startLoop() {
+  if (_cgW.rafId) return;
+  const tick = () => { _updatePositions(); _cgW.rafId = requestAnimationFrame(tick); };
+  _cgW.rafId = requestAnimationFrame(tick);
+}
+
+function _updatePositions() {
+  const wc = window.worldContainer;
+  if (!wc) return;
+  const scale = wc.scale.x;
+  const camX  = wc.x;
+  const camY  = wc.y;
+  const st    = window.getBubbleState();
+
+  for (const bid in _cgW.worlds) {
+    const inst = _cgW.worlds[bid];
+    // Track bubble if it moves
+    if (st) {
+      const b = st.bubbles?.[bid];
+      if (b) {
+        const totalW = 5 * CG_CFG.MINI_W + 4 * CG_CFG.GAP;
+        inst.startWX = b.x + b.size / 2 - totalW / 2;
+        inst.startWY = b.y + b.size + CG_CFG.OFFSET_Y;
+      }
+    }
+    const sx = inst.startWX * scale + camX;
+    const sy = inst.startWY * scale + camY;
+    // translate positions the container; scale makes content zoom with world
+    inst.container.style.transform = `translate(${sx}px,${sy}px) scale(${scale})`;
+  }
+}
+
+// Legacy stub — kept so any lingering references don't crash
+window.createDefaultCGData = function() { return {}; };
+window.cgRenderCanvas      = function() {};
+window.broadcastCGUpdate   = function() {};
+window.cgOpenTab           = function() {};
+
+// (legacy functions removed — CG is now rendered in world-positioned iframes)
 function getDefaultUIKit() {
   return [
     { id:'atom_btn',    name:'Кнопка',    css:'background:#5e6ad2;color:#fff;padding:10px 24px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;',    html:'<button>Кнопка</button>',  js:'', group:'Базовые' },
