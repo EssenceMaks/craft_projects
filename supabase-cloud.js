@@ -8,18 +8,26 @@
 const SC = {
   client:        null,
   user:          null,
-  projectBase:   null,    // base name, e.g. 'project_1' (instances derive from this)
+  projectBase:   null,    // base name, e.g. 'project_1'
   channel:       null,    // own live broadcast channel
-  watchChannel:  null,    // channel we're subscribed to for watching another user
-  liveMode:      false,   // are WE broadcasting?
-  watchMode:     false,   // are we watching someone else?
+  watchChannel:  null,    // channel subscribed to for watching another user
+  liveMode:      false,   // WE are broadcasting
+  watchMode:     false,   // watching someone else
   watchTarget:   null,    // userId being watched
   liveCursors:   {},      // { userId: domElement }
-  autosaveTimer: null,    // cloud autosave (3 min, only while live)
-  localTimer:    null,    // localStorage autosave (15 sec, always)
-  cursorThrottle:null,    // cursor broadcast throttle
+  notes:         {},      // { userId: { x,y,text } } — attached notes
+  noteMode:      false,   // waiting for Enter after 'e'
+  noteModeTimer: null,
+  lastCursorX:   0,       // last canvas cursor X
+  lastCursorY:   0,       // last canvas cursor Y
+  lastMouseScr:  null,    // { x, y } in screen coords
+  applyingRemote:false,   // true while applying remote canvas update
+  autosaveTimer: null,
+  localTimer:    null,
+  cursorThrottle:null,
   loginSelected: null,
 };
+let _origRenderCanvas = null; // hook for co-editing
 
 // ════════════════════════════════════════════════════════════════
 // INIT
@@ -42,21 +50,70 @@ window.initCloud = function() {
     cl.id = 'cursors-layer';
     cl.style.cssText = 'position:absolute;top:0;left:0;width:4000px;height:3000px;pointer-events:none;z-index:200;';
     ca.appendChild(cl);
+    // Unified mousemove: track position + broadcast cursor in any collab mode
     ca.addEventListener('mousemove', e => {
-      if (!SC.liveMode || !SC.channel) return;
+      const rect = ca.getBoundingClientRect();
+      SC.lastCursorX = Math.round(ca.scrollLeft + e.clientX - rect.left);
+      SC.lastCursorY = Math.round(ca.scrollTop + e.clientY - rect.top);
+      SC.lastMouseScr = { x: e.clientX, y: e.clientY };
+      // Move my own note bubble with cursor
+      const myNote = document.getElementById('note_' + SC.user?.id);
+      if (myNote && SC.notes[SC.user?.id]) {
+        myNote.style.left = (SC.lastCursorX + 16) + 'px';
+        myNote.style.top = SC.lastCursorY + 'px';
+      }
+      // Broadcast cursor (live host OR watcher co-edit)
+      const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
+      if (!ch || !SC.user) return;
       if (SC.cursorThrottle) return;
       SC.cursorThrottle = setTimeout(() => { SC.cursorThrottle = null; }, 50);
-      const rect = ca.getBoundingClientRect();
-      SC.channel.send({
+      ch.send({
         type: 'broadcast', event: 'cursor',
         payload: {
           uid: SC.user.id, name: SC.user.name, color: SC.user.color, av: SC.user.av,
-          x: Math.round(ca.scrollLeft + e.clientX - rect.left),
-          y: Math.round(ca.scrollTop + e.clientY - rect.top)
+          x: SC.lastCursorX, y: SC.lastCursorY,
+          note: SC.notes[SC.user.id]?.text || null
         }
       });
     });
   }
+  // Hook renderCanvas for co-editing broadcast
+  if (window.renderCanvas && !_origRenderCanvas) {
+    _origRenderCanvas = window.renderCanvas;
+    window.renderCanvas = function(...args) {
+      _origRenderCanvas.apply(this, args);
+      if (!SC.applyingRemote) broadcastCanvasUpdate();
+    };
+  }
+  // e + Enter → open note overlay
+  document.addEventListener('keydown', e => {
+    const tag = document.activeElement?.tagName;
+    const noteOpen = document.getElementById('note-overlay')?.style.display !== 'none';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (noteOpen) {
+      if (e.key === 'Enter') { e.preventDefault(); submitNote(); }
+      if (e.key === 'Escape') cancelNote();
+      return;
+    }
+    if (e.key.toLowerCase() === 'e' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      SC.noteMode = true;
+      if (SC.noteModeTimer) clearTimeout(SC.noteModeTimer);
+      SC.noteModeTimer = setTimeout(() => { SC.noteMode = false; }, 1500);
+    }
+    if (e.key === 'Enter' && SC.noteMode) {
+      e.preventDefault();
+      SC.noteMode = false;
+      if (SC.noteModeTimer) { clearTimeout(SC.noteModeTimer); SC.noteModeTimer = null; }
+      // Toggle: if note exists for me, remove it; else open input
+      if (SC.notes[SC.user?.id]) { removeMyNote(); } else { openNoteOverlay(); }
+    }
+  });
+  // Note textarea word count
+  document.getElementById('note-textarea')?.addEventListener('input', e => {
+    const words = e.target.value.trim().split(/\s+/).filter(w => w).length;
+    const el = document.getElementById('note-word-count');
+    if (el) el.textContent = words + ' слов';
+  });
   restoreSession();
   startLocalAutosave();
   buildLoginModal();
@@ -137,6 +194,7 @@ function renderUserBadge() {
   }
   const lbl = document.getElementById('cloud-project-label');
   if (lbl) lbl.textContent = SC.projectBase ? '📁 ' + SC.projectBase : '—';
+  renderContextBar();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -477,6 +535,19 @@ async function startLiveSession() {
       payload: { items: S.items, connections: S.connections, base: SC.projectBase } });
   });
 
+  // Receive canvas edits from co-editors/watchers
+  SC.channel.on('broadcast', { event: 'canvas_update' }, ({ payload }) => {
+    if (payload.from === SC.user?.id) return;
+    applyRemoteCanvas(payload);
+  });
+
+  // Receive note updates from co-editors
+  SC.channel.on('broadcast', { event: 'note_update' }, ({ payload }) => {
+    if (payload.uid === SC.user?.id) return;
+    SC.notes[payload.uid] = { text: payload.text };
+    showNoteOnCanvas(payload.uid, payload.name, payload.color, payload.av, payload.x, payload.y, payload.text);
+  });
+
   await SC.channel.subscribe(async status => {
     if (status === 'SUBSCRIBED') {
       await SC.channel.track({ user: SC.user.name, color: SC.user.color, av: SC.user.av });
@@ -531,7 +602,12 @@ window.watchLive = async function(targetUserId) {
     S.items = payload.items || S.items;
     S.connections = payload.connections || S.connections;
     if (payload.base) SC.projectBase = payload.base;
-    renderCanvas(); renderDom(); updAnimBtn();
+    applyRemoteCanvas({ items: S.items, connections: S.connections, from: '__sync__' });
+  });
+
+  SC.watchChannel.on('broadcast', { event: 'canvas_update' }, ({ payload }) => {
+    if (payload.from === SC.user?.id) return;
+    applyRemoteCanvas(payload);
   });
 
   SC.watchChannel.on('broadcast', { event: 'css_change' }, ({ payload }) =>
@@ -542,10 +618,15 @@ window.watchLive = async function(targetUserId) {
     updateRemoteCursor(payload)
   );
 
+  SC.watchChannel.on('broadcast', { event: 'note_update' }, ({ payload }) => {
+    if (payload.uid === SC.user?.id) return;
+    SC.notes[payload.uid] = { text: payload.text };
+    showNoteOnCanvas(payload.uid, payload.name, payload.color, payload.av, payload.x, payload.y, payload.text);
+  });
+
   await SC.watchChannel.subscribe(async status => {
     if (status === 'SUBSCRIBED') {
       await SC.watchChannel.track({ user: SC.user.name, color: SC.user.color, av: SC.user.av });
-      // Request current state
       SC.watchChannel.send({ type: 'broadcast', event: 'request_sync', payload: {} });
     }
   });
@@ -554,7 +635,7 @@ window.watchLive = async function(targetUserId) {
   SC.watchTarget = targetUserId;
   const u = TEAM_USERS.find(x => x.id === targetUserId);
   updateLiveUI('watch', u?.name || targetUserId);
-  cloudToast('👁 Наблюдаете за ' + (u?.name || targetUserId), 'info');
+  cloudToast('👁 Наблюдаете за ' + (u?.name || targetUserId) + '. Редактирование включено.', 'info');
 };
 
 async function stopWatching() {
@@ -564,10 +645,35 @@ async function stopWatching() {
   updateLiveUI('off', '');
 }
 
+// ── Co-editing: canvas broadcast & apply ─────────────────────
+function broadcastCanvasUpdate() {
+  const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
+  if (!ch || !SC.user) return;
+  ch.send({
+    type: 'broadcast', event: 'canvas_update',
+    payload: { items: S.items, connections: S.connections, from: SC.user.id }
+  });
+}
+
+function applyRemoteCanvas({ items, connections, from }) {
+  if (from && from !== '__sync__') {
+    // Allow apply even without from check since from===own is filtered upstream
+  }
+  SC.applyingRemote = true;
+  S.items = items || S.items;
+  S.connections = connections || S.connections;
+  S.selId = null; S.selIds = []; S.selIsCopy = false; S.selConnId = null;
+  if (_origRenderCanvas) _origRenderCanvas.call(window);
+  if (typeof renderDom === 'function') renderDom();
+  if (typeof updAnimBtn === 'function') updAnimBtn();
+  SC.applyingRemote = false;
+}
+
 // ── Broadcast / Apply CSS ────────────────────────────────────
 window.broadcastCss = function(elId, css, isCopy, connId) {
-  if (!SC.liveMode || !SC.channel) return;
-  SC.channel.send({
+  const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
+  if (!ch) return;
+  ch.send({
     type: 'broadcast', event: 'css_change',
     payload: { elId, css, isCopy, connId }
   });
@@ -585,7 +691,7 @@ function applyRemoteCss({ elId, css, isCopy, connId }) {
 }
 
 // ── Remote cursor rendering ───────────────────────────────────
-function updateRemoteCursor({ uid, name, color, av, x, y }) {
+function updateRemoteCursor({ uid, name, color, av, x, y, note }) {
   if (uid === SC.user?.id) return;
   const layer = document.getElementById('cursors-layer');
   if (!layer) return;
@@ -604,6 +710,21 @@ function updateRemoteCursor({ uid, name, color, av, x, y }) {
   }
   cur.style.left = x + 'px';
   cur.style.top = y + 'px';
+  // Update or remove floating note for this cursor
+  const prevNote = SC.notes[uid]?.text || null;
+  if (note !== undefined && note !== prevNote) {
+    if (note) {
+      SC.notes[uid] = { text: note };
+      showNoteOnCanvas(uid, name, color, av, x + 16, y, note);
+    } else {
+      delete SC.notes[uid];
+      document.getElementById('note_' + uid)?.remove();
+    }
+  } else if (note && SC.notes[uid]) {
+    // Move note with cursor
+    const nb = document.getElementById('note_' + uid);
+    if (nb) { nb.style.left = (x + 16) + 'px'; nb.style.top = y + 'px'; }
+  }
 }
 
 function clearRemoteCursors() {
@@ -625,19 +746,152 @@ function renderOnlineUsers(state) {
 function updateLiveUI(mode, label) {
   const btn = document.getElementById('live-btn');
   const status = document.getElementById('live-status');
+  const copyBtn = document.getElementById('copy-local-btn');
   if (mode === 'live') {
-    if (btn) { btn.style.background = '#22c55e'; btn.style.color = '#fff'; btn.textContent = '● LIVE'; btn.title = 'Остановить Live'; }
+    if (btn) { btn.style.background = '#22c55e'; btn.style.color = '#fff'; btn.textContent = '● LIVE'; btn.title = 'Остановить Live'; btn.onclick = () => toggleLiveSession(); }
     if (status) { status.textContent = label; status.style.color = '#22c55e'; }
+    if (copyBtn) copyBtn.style.display = 'none';
   } else if (mode === 'watch') {
-    if (btn) { btn.style.background = '#3b82f6'; btn.style.color = '#fff'; btn.textContent = '👁 ' + label; btn.title = 'Выйти из просмотра (клик)'; }
+    if (btn) { btn.style.background = '#3b82f6'; btn.style.color = '#fff'; btn.textContent = '✏️ ' + label; btn.title = 'Совместное редактирование. Клик — выйти'; }
     if (status) { status.textContent = ''; }
+    if (copyBtn) copyBtn.style.display = '';
     btn && (btn.onclick = async () => { await stopWatching(); btn.onclick = () => toggleLiveSession(); });
   } else {
     if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '⚡ Live'; btn.title = 'Запустить Live'; btn.onclick = () => toggleLiveSession(); }
     if (status) { status.textContent = ''; }
+    if (copyBtn) copyBtn.style.display = 'none';
   }
   renderUserBadge();
+  renderContextBar();
 }
+
+// ════════════════════════════════════════════════════════════════
+// NOTE SYSTEM (e + Enter)
+// ════════════════════════════════════════════════════════════════
+
+function openNoteOverlay() {
+  const overlay = document.getElementById('note-overlay');
+  const wrap = document.getElementById('note-input-wrap');
+  const textarea = document.getElementById('note-textarea');
+  if (!overlay) return;
+  // Position near cursor (screen coordinates)
+  const scr = SC.lastMouseScr || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  let left = Math.min(scr.x + 16, window.innerWidth - 390);
+  let top  = Math.min(scr.y - 20, window.innerHeight - 260);
+  wrap.style.left = left + 'px';
+  wrap.style.top  = top + 'px';
+  textarea.value = '';
+  const cnt = document.getElementById('note-word-count');
+  if (cnt) cnt.textContent = '0 слов';
+  overlay.style.display = '';
+  setTimeout(() => textarea.focus(), 30);
+}
+
+window.submitNote = function() {
+  const textarea = document.getElementById('note-textarea');
+  const text = textarea?.value?.trim();
+  if (!text) { cancelNote(); return; }
+  document.getElementById('note-overlay').style.display = 'none';
+  if (!SC.user) return;
+  const cx = SC.lastCursorX;
+  const cy = SC.lastCursorY;
+  SC.notes[SC.user.id] = { x: cx, y: cy, text };
+  showNoteOnCanvas(SC.user.id, SC.user.name, SC.user.color, SC.user.av, cx + 16, cy, text, true);
+  // Broadcast
+  const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
+  if (ch) {
+    ch.send({
+      type: 'broadcast', event: 'note_update',
+      payload: { uid: SC.user.id, name: SC.user.name, color: SC.user.color, av: SC.user.av, x: cx + 16, y: cy, text }
+    });
+  }
+};
+
+window.cancelNote = function() {
+  document.getElementById('note-overlay').style.display = 'none';
+};
+
+window.removeMyNote = function() {
+  if (!SC.user) return;
+  delete SC.notes[SC.user.id];
+  document.getElementById('note_' + SC.user.id)?.remove();
+  // Broadcast removal (empty text = remove)
+  const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
+  if (ch) {
+    ch.send({
+      type: 'broadcast', event: 'note_update',
+      payload: { uid: SC.user.id, name: SC.user.name, color: SC.user.color, av: SC.user.av, x: 0, y: 0, text: '' }
+    });
+  }
+};
+
+function showNoteOnCanvas(uid, name, color, av, x, y, text, isMine) {
+  const layer = document.getElementById('cursors-layer');
+  if (!layer) return;
+  document.getElementById('note_' + uid)?.remove();
+  if (!text) return;
+  const div = document.createElement('div');
+  div.id = 'note_' + uid;
+  div.style.cssText = `position:absolute;left:${x}px;top:${y}px;pointer-events:${isMine ? 'auto' : 'none'};z-index:202;`;
+  div.innerHTML = `
+    <div style="background:${color};color:#fff;border-radius:0 9px 9px 9px;padding:6px 10px;
+      max-width:200px;box-shadow:0 3px 10px rgba(0,0,0,.22);font-size:11px;line-height:1.5;">
+      <div style="font-size:9px;font-weight:700;margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;">
+        <span>${av} ${name}</span>
+        ${isMine ? `<span onclick="removeMyNote()" style="cursor:pointer;opacity:.75;margin-left:8px;font-size:11px;" title="Удалить заметку">✕</span>` : ''}
+      </div>
+      <div>${text}</div>
+    </div>`;
+  layer.appendChild(div);
+}
+
+// ════════════════════════════════════════════════════════════════
+// CONTEXT BAR & COPY HOST LOCALLY
+// ════════════════════════════════════════════════════════════════
+
+function renderContextBar() {
+  const ctxLocal  = document.getElementById('ctx-local');
+  const ctxGlobal = document.getElementById('ctx-global');
+  if (!ctxLocal) return;
+  if (!SC.user) { ctxLocal.textContent = '—'; ctxGlobal.textContent = ''; return; }
+
+  let local = SC.user.av + ' ' + SC.user.name;
+  if (SC.watchMode && SC.watchTarget) {
+    const u = TEAM_USERS.find(x => x.id === SC.watchTarget);
+    local = '✏️ совм. с ' + (u?.name || SC.watchTarget);
+  }
+  if (SC.projectBase) local += ' | ' + SC.projectBase;
+  ctxLocal.textContent = local;
+
+  // Async: fetch last global instance
+  if (SC.client && SC.projectBase) {
+    SC.client.from('projects')
+      .select('id').ilike('id', SC.projectBase + '_экземпляр_%')
+      .not('id', 'ilike', 'live_%')
+      .order('id', { ascending: false }).limit(1)
+      .then(({ data }) => {
+        if (!data?.[0]) { ctxGlobal.textContent = 'глобальных нет'; return; }
+        const m = data[0].id.match(/_экземпляр_(\d+)$/);
+        ctxGlobal.textContent = m ? 'глобальный: экз. ' + m[1] : data[0].id;
+      });
+  } else {
+    ctxGlobal.textContent = SC.projectBase ? '' : 'без проекта';
+  }
+}
+
+// Copy the host's current live state to MY localStorage
+window.copyHostLocally = async function() {
+  if (!SC.watchTarget || !SC.client) { cloudToast('Сначала начните наблюдение', 'warn'); return; }
+  const { data } = await SC.client.from('projects')
+    .select('data').eq('id', 'live_' + SC.watchTarget).single();
+  if (!data?.data) { cloudToast('Нет данных от хоста', 'error'); return; }
+  const u = TEAM_USERS.find(x => x.id === SC.watchTarget);
+  const name = (SC.projectBase || 'project') + '_копия_' + (u?.name || SC.watchTarget) + '_' + new Date().toISOString().slice(0,10);
+  const saves = JSON.parse(localStorage.getItem('cg_local_saves') || '[]');
+  saves.unshift({ id: name.replace(/\s+/g,'_'), name, ts: Date.now(), data: data.data });
+  localStorage.setItem('cg_local_saves', JSON.stringify(saves.slice(0, 10)));
+  cloudToast('📋 Скопировано: ' + name, 'success');
+};
 
 // ════════════════════════════════════════════════════════════════
 // TOAST

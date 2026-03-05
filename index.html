@@ -151,9 +151,19 @@ i[data-lucide]{width:15px;height:15px;stroke-width:2;}
 .gt{font-weight:700;font-size:14px;margin-bottom:12px;}
 ::-webkit-scrollbar{width:5px;height:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px;}
 /* Cloud UI */
-#cloud-bar{display:flex;align-items:center;gap:7px;margin-left:auto;flex-shrink:0;padding-left:13px;border-left:1px solid var(--bd);}
+#cloud-bar{display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0;padding-left:13px;border-left:1px solid var(--bd);}
 #live-btn{padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;border:none;background:var(--bd);color:var(--tx);transition:.2s;}
-#live-status{font-size:10px;font-weight:700;color:#22c55e;min-width:60px;}
+#live-status{font-size:10px;font-weight:700;color:#22c55e;min-width:40px;}
+#context-bar{font-size:10px;line-height:1.4;max-width:210px;padding-right:8px;border-right:1px solid var(--bd);margin-right:2px;}
+#ctx-local{color:var(--tx);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#ctx-global{color:var(--mu);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#note-overlay{display:none;position:fixed;inset:0;z-index:5000;background:rgba(0,0,0,.55);pointer-events:auto;}
+#note-input-wrap{position:absolute;background:#fff;border-radius:10px;padding:13px;box-shadow:0 8px 32px rgba(0,0,0,.3);min-width:270px;max-width:360px;}
+#note-textarea{width:100%;resize:none;border:1px solid #e5e7eb;border-radius:6px;padding:8px;font-size:12px;font-family:inherit;outline:none;}
+#note-textarea:focus{border-color:var(--bl);}
+.note-bubble{position:absolute;pointer-events:none;z-index:202;}
+.note-text-box{background:var(--nc,#8b5cf6);color:#fff;border-radius:0 9px 9px 9px;padding:7px 10px;max-width:190px;font-size:11px;line-height:1.5;box-shadow:0 3px 10px rgba(0,0,0,.2);word-break:break-word;}
+.note-label{font-size:9px;font-weight:700;opacity:.85;margin-bottom:3px;display:flex;justify-content:space-between;align-items:center;}
 .cloud-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;}
 .cloud-modal-box{background:#fff;border-radius:12px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.25);max-width:680px;width:95%;max-height:85vh;display:flex;flex-direction:column;}
 .cloud-modal-box h3{font-size:16px;font-weight:800;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;}
@@ -177,10 +187,16 @@ i[data-lucide]{width:15px;height:15px;stroke-width:2;}
   <button data-tab="5" class="tb"><i data-lucide="layers"></i> 5. Галерея</button>
   <!-- Cloud bar -->
   <div id="cloud-bar">
+    <div id="context-bar">
+      <div id="ctx-local">—</div>
+      <div id="ctx-global"></div>
+    </div>
     <div id="online-users" style="display:flex;"></div>
     <span id="live-status"></span>
     <button id="live-btn" onclick="toggleLiveSession()" title="Запустить Live сессию">⚡ Live</button>
-    <button class="btn btn-s" onclick="saveToCloud('manual')" title="Сохранить в облако" style="font-size:11px;padding:4px 9px;">☁ Сохранить</button>
+    <button class="btn btn-s" onclick="approveLocal()" title="Сохранить в локальный апрув" style="font-size:11px;padding:4px 9px;">💾 Локально</button>
+    <button class="btn btn-s" id="copy-local-btn" onclick="copyHostLocally()" title="Скопировать холст хоста к себе" style="font-size:11px;padding:4px 9px;display:none;">📋 Скопировать</button>
+    <button class="btn btn-g" onclick="pushToCenter()" title="Сохранить в Supabase как новый экземпляр" style="font-size:11px;padding:4px 9px;">📤 Глобально</button>
     <button class="btn btn-s" onclick="showCloudModal()" title="Проекты и версии" style="font-size:11px;padding:4px 9px;">📂 Проекты</button>
     <span style="font-size:10px;color:var(--mu);" id="cloud-project-label">—</span>
     <div id="user-badge"></div>
@@ -1539,6 +1555,21 @@ renderSets();
       <input id="cloud-new-name" class="inp" placeholder="Базовое имя проекта (напр. project_1)…" style="flex:1;min-width:140px;">
       <button class="btn btn-s" onclick="downloadSnapshot()" style="font-size:11px;">⬇ JSON слепок</button>
       <button class="btn btn-s" onclick="importSnapshot()" style="font-size:11px;">⬆ Импорт JSON</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ NOTE OVERLAY ════════════════════════════════════════ -->
+<div id="note-overlay">
+  <div id="note-input-wrap">
+    <div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:7px;">📝 Прикрепить заметку к курсору <kbd style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:9px;">Enter</kbd> — применить &nbsp; <kbd style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:9px;">Esc</kbd> — отмена</div>
+    <textarea id="note-textarea" rows="5" placeholder="Введите текст (~150 слов)…"></textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+      <span id="note-word-count" style="font-size:9px;color:var(--mu);">0 слов</span>
+      <div style="display:flex;gap:5px;">
+        <button class="btn btn-s" onclick="cancelNote()" style="font-size:11px;">✕ Отмена</button>
+        <button class="btn btn-b" onclick="submitNote()" style="font-size:11px;">✓ Прикрепить</button>
+      </div>
     </div>
   </div>
 </div>
