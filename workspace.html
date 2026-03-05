@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workspace — Bubble + Component Generator</title>
+<script src="https://pixijs.download/v7.3.2/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="https://unpkg.com/lucide-static@latest/font/lucide.css">
+<style>
+/* ═══════════════════════════════════════════════════════════
+   BASE / RESET
+═══════════════════════════════════════════════════════════ */
+:root {
+  --bg: #0b0d17;
+  --panel-bg: rgba(20,22,35,0.92);
+  --glass-bd: rgba(255,255,255,0.1);
+  --text: #e0e6ed;
+  --mu: #7a8599;
+  --accent: #5e6ad2;
+  --p: #8b5cf6;
+  --bd: #d1d5db;
+  --success: #22c55e;
+  --warn: #f59e0b;
+  --error: #ef4444;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; user-select: none; }
+html, body { width:100vw; height:100vh; overflow:hidden; background:var(--bg); color:var(--text); }
+
+/* ═══════════════════════════════════════════════════════════
+   PIXI CANVAS
+═══════════════════════════════════════════════════════════ */
+#pixi-canvas { position:absolute; top:0; left:0; width:100%; height:100%; z-index:1; }
+
+/* ═══════════════════════════════════════════════════════════
+   CLOUD BAR (top header — from CG project)
+═══════════════════════════════════════════════════════════ */
+#cloud-bar {
+  position:fixed; top:0; left:0; right:0; height:40px; z-index:2000;
+  background:rgba(15,20,35,0.97); border-bottom:1px solid rgba(255,255,255,0.08);
+  display:flex; align-items:center; gap:8px; padding:0 10px;
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+}
+#context-bar { flex:1; display:flex; flex-direction:column; justify-content:center; gap:1px; min-width:0; }
+#ctx-local  { font-size:11px; font-weight:700; color:#e0e6ed; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#ctx-global { font-size:10px; color:#7a8599; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#user-badge { flex-shrink:0; }
+#online-users { display:flex; gap:3px; flex-shrink:0; }
+.cloud-bar-sep { width:1px; height:20px; background:rgba(255,255,255,0.12); flex-shrink:0; }
+.cb-btn {
+  display:inline-flex; align-items:center; gap:4px;
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15);
+  color:#e0e6ed; padding:3px 9px; border-radius:7px; font-size:11px; font-weight:600;
+  cursor:pointer; transition:background .15s, border-color .15s; white-space:nowrap;
+}
+.cb-btn:hover { background:rgba(255,255,255,0.13); border-color:rgba(255,255,255,0.3); }
+.cb-btn.live  { background:rgba(34,197,94,0.18); border-color:#22c55e; color:#22c55e; }
+.cb-btn.watch { background:rgba(59,130,246,0.18); border-color:#3b82f6; color:#3b82f6; }
+.cb-btn.save  { background:rgba(16,185,129,0.15); border-color:#10b981; color:#10b981; }
+.cb-btn.global-save { background:rgba(139,92,246,0.15); border-color:#8b5cf6; color:#8b5cf6; }
+#copy-local-btn { display:none; }
+
+/* ═══════════════════════════════════════════════════════════
+   GLASS PANEL (shared utility)
+═══════════════════════════════════════════════════════════ */
+.glass-panel {
+  background:var(--panel-bg); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  border:1px solid var(--glass-bd); border-radius:16px;
+  box-shadow:0 8px 32px rgba(0,0,0,.37); z-index:1000;
+}
+body.eco-mode .glass-panel { backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   TOOLBAR (bubble-style, below cloud-bar)
+═══════════════════════════════════════════════════════════ */
+#toolbar {
+  position:fixed; top:54px; left:50%; transform:translateX(-50%);
+  display:none; gap:10px; padding:10px 20px; align-items:center;
+  z-index:1001; cursor:grab;
+}
+#link-tools {
+  position:fixed; top:110px; left:50%; transform:translateX(-50%);
+  display:none; gap:15px; padding:10px 20px; align-items:center; z-index:1000;
+}
+.toolbar-group {
+  display:flex; align-items:center; gap:5px;
+  background:rgba(0,0,0,0.25); padding:5px; border-radius:10px;
+  border:1px solid rgba(255,255,255,0.1);
+}
+button {
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.2);
+  color:#fff; padding:8px 16px; border-radius:8px; cursor:pointer; transition:.2s;
+  display:flex; align-items:center; justify-content:center; gap:5px; position:relative;
+}
+button:hover:not(:disabled) { background:rgba(255,255,255,0.15); box-shadow:0 0 10px rgba(255,255,255,0.2); }
+button.active { background:var(--accent); border-color:#7b88ff; box-shadow:0 0 15px var(--accent); }
+button:disabled { opacity:.5; cursor:not-allowed; }
+.icon-btn { padding:6px; width:32px; height:32px; font-size:16px; display:flex; align-items:center; justify-content:center; }
+.action-btn { background:rgba(255,50,50,0.2); border:1px solid rgba(255,50,50,0.5); padding:4px 8px; font-size:12px; }
+.divider { width:1px; height:24px; background:rgba(255,255,255,0.2); margin:0 5px; }
+.form-group { display:flex; flex-direction:column; gap:5px; }
+.form-group.row { flex-direction:row; justify-content:space-between; align-items:center; }
+.form-group label { font-size:12px; color:#a0aabf; }
+input[type=text], input[type=number], select, input[type=range] {
+  background:rgba(0,0,0,0.2); border:1px solid var(--glass-bd); color:#fff;
+  padding:8px; border-radius:6px; outline:none; flex:1; min-width:0;
+}
+input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+input[type=color] { background:none; border:none; width:100%; height:30px; cursor:pointer; padding:0; }
+.slider-sm { width:80px !important; }
+.dropdown-menu {
+  position:absolute; top:100%; left:0; margin-top:5px;
+  background:rgba(15,23,42,0.97); border:1px solid rgba(255,255,255,0.2);
+  border-radius:8px; display:none; flex-direction:column; gap:2px;
+  padding:5px; min-width:150px; z-index:2000;
+}
+.dropdown-menu button { background:transparent; border:none; justify-content:flex-start; padding:8px 12px; border-radius:4px; }
+.dropdown-menu button:hover { background:rgba(255,255,255,0.1); }
+#fps-counter { position:absolute; bottom:-18px; left:8px; font-size:10px; color:#00ffcc; font-weight:bold; letter-spacing:1px; white-space:nowrap; pointer-events:none; font-family:'Segoe UI',sans-serif; }
+
+/* ═══════════════════════════════════════════════════════════
+   CONTEXT MENU
+═══════════════════════════════════════════════════════════ */
+#ctx-menu {
+  position:absolute; background:rgba(15,23,42,0.97);
+  border:1px solid rgba(255,255,255,0.2); padding:5px; border-radius:8px;
+  box-shadow:0 4px 15px rgba(0,0,0,.5); font-size:13px; z-index:3000;
+  display:none; flex-direction:column; gap:2px; backdrop-filter:blur(10px);
+}
+.ctx-btn { padding:8px 12px; color:#fff; cursor:pointer; border-radius:5px; transition:background .2s; white-space:nowrap; }
+.ctx-btn:hover { background:rgba(255,255,255,0.1); }
+.ctx-btn.danger { color:#ff5555; }
+.ctx-btn.danger:hover { background:rgba(255,85,85,0.2); }
+.ctx-btn.accent { color:#a78bfa; }
+.ctx-sep { height:1px; background:rgba(255,255,255,0.08); margin:3px 0; }
+
+/* ═══════════════════════════════════════════════════════════
+   PROPERTIES PANEL (bubble-style)
+═══════════════════════════════════════════════════════════ */
+#properties-panel {
+  display:none; position:fixed; z-index:2100; width:280px; max-height:80vh;
+  overflow-y:auto; overflow-x:hidden;
+  background:rgba(15,23,42,0.97); padding:10px; border-radius:8px;
+  border:1px solid rgba(255,255,255,0.2); backdrop-filter:blur(10px);
+  flex-direction:column;
+}
+#properties-panel::-webkit-scrollbar { width:5px; }
+#properties-panel::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.2); border-radius:3px; }
+.layer-box { background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); padding:10px; border-radius:8px; margin-top:10px; }
+
+/* ═══════════════════════════════════════════════════════════
+   CAMERA BOUND BUTTONS
+═══════════════════════════════════════════════════════════ */
+.bound-btn {
+  position:fixed; background:rgba(94,106,210,0.8); border:1px solid rgba(255,255,255,0.3);
+  color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:1000;
+  opacity:0; pointer-events:none; transition:opacity .2s,background .2s;
+  backdrop-filter:blur(5px); font-weight:bold; border-radius:8px;
+}
+.bound-btn:hover { background:rgba(123,136,255,0.9); }
+.bound-btn.visible { opacity:1; pointer-events:auto; }
+#bound-left  { left:10px;   top:50%;  transform:translateY(-50%); width:40px; height:100px; }
+#bound-right { right:10px;  top:50%;  transform:translateY(-50%); width:40px; height:100px; }
+#bound-top   { top:10px;    left:50%; transform:translateX(-50%); width:100px; height:40px; }
+#bound-bottom{ bottom:10px; left:50%; transform:translateX(-50%); width:100px; height:40px; }
+
+/* ═══════════════════════════════════════════════════════════
+   MINIMAP
+═══════════════════════════════════════════════════════════ */
+#minimap-hud {
+  position:fixed; bottom:20px; right:20px; width:150px; height:150px;
+  padding:0; z-index:100; overflow:hidden; border-radius:12px;
+  transition:width .3s,height .3s;
+}
+#minimap-canvas { width:100%; height:100%; display:block; cursor:crosshair; }
+.minimap-ctrl { background:rgba(0,0,0,0.5); border-radius:4px; padding:2px 5px; cursor:pointer; font-size:10px; color:#fff; }
+
+/* ═══════════════════════════════════════════════════════════
+   CG PANELS (overlay over PixiJS)
+═══════════════════════════════════════════════════════════ */
+.cg-panel {
+  position:fixed; z-index:1500; display:none;
+  background:rgba(18,20,35,0.97); border:1px solid rgba(255,255,255,0.15);
+  border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.6);
+  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  flex-direction:column; overflow:hidden; resize:both;
+  min-width:260px; min-height:180px;
+}
+.cg-panel.active { display:flex; }
+.cg-panel-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.08);
+  cursor:move; background:rgba(0,0,0,0.2); flex-shrink:0;
+}
+.cg-panel-title { font-size:12px; font-weight:700; color:#e0e6ed; display:flex; align-items:center; gap:6px; }
+.cg-panel-close {
+  cursor:pointer; color:#7a8599; font-size:16px; line-height:1; padding:2px 5px; border-radius:4px;
+  background:transparent; border:none; transition:color .15s;
+}
+.cg-panel-close:hover { color:#e0e6ed; background:rgba(255,255,255,0.08); }
+.cg-panel-body { flex:1; overflow:auto; padding:10px; }
+.cg-panel-body::-webkit-scrollbar { width:4px; }
+.cg-panel-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); border-radius:2px; }
+
+/* CG panel sizes */
+#cg-panel-1 { width:360px;  height:480px; top:60px;  left:20px; }
+#cg-panel-2 { width:280px;  height:320px; top:60px;  left:400px; }
+#cg-panel-3 { width:700px;  height:560px; top:60px;  left:50%; transform:translateX(-50%); resize:both; }
+#cg-panel-4 { width:420px;  height:480px; top:60px;  right:20px; }
+#cg-panel-5 { width:340px;  height:340px; bottom:60px; left:20px; }
+
+/* ═══════════════════════════════════════════════════════════
+   CG CANVAS (inside panel-3 / Assembly tab)
+═══════════════════════════════════════════════════════════ */
+#cg-canvas-wrap {
+  position:relative; width:100%; height:calc(100% - 32px);
+  overflow:auto; background:rgba(0,0,0,0.1); border-radius:6px;
+}
+#cg-ca {
+  position:absolute; top:0; left:0;
+  width:3000px; height:2400px; overflow:hidden;
+}
+#cg-cvf { position:absolute; top:0; left:0; width:100%; height:100%; }
+.cg-item {
+  position:absolute; cursor:pointer; box-sizing:border-box;
+  border:2px solid transparent; border-radius:4px; overflow:hidden;
+}
+.cg-item.selected { border-color:#3b82f6 !important; box-shadow:0 0 0 2px #3b82f655; }
+.cg-item .cg-resize-handle {
+  position:absolute; right:-4px; bottom:-4px; width:10px; height:10px;
+  background:#3b82f6; border-radius:2px; cursor:se-resize; z-index:10;
+}
+
+/* CG SVG arrows */
+#cg-svg-overlay {
+  position:absolute; top:0; left:0; width:3000px; height:2400px;
+  pointer-events:none; overflow:visible; z-index:5;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CG UI KIT & ATOM GRIDS
+═══════════════════════════════════════════════════════════ */
+.cg-atom-grid { display:flex; flex-wrap:wrap; gap:8px; padding:6px; }
+.cg-atom {
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+  border-radius:8px; padding:8px; cursor:grab; font-size:11px; text-align:center;
+  min-width:70px; transition:background .15s;
+}
+.cg-atom:hover { background:rgba(255,255,255,0.12); }
+.cg-atom-label { font-size:9px; color:var(--mu); margin-top:4px; }
+.cg-group-title { font-size:10px; font-weight:700; color:var(--accent); padding:4px 6px 2px; letter-spacing:.5px; }
+
+/* ═══════════════════════════════════════════════════════════
+   CG PROPERTIES SIDEBAR (inside panel-3)
+═══════════════════════════════════════════════════════════ */
+#cg-props-sidebar {
+  position:absolute; right:0; top:32px; bottom:0; width:230px;
+  background:rgba(12,14,25,0.97); border-left:1px solid rgba(255,255,255,0.08);
+  overflow-y:auto; padding:8px; z-index:10; display:none; flex-direction:column; gap:8px;
+}
+#cg-props-sidebar.open { display:flex; }
+.cg-prop-row { display:flex; gap:6px; align-items:center; }
+.cg-prop-row label { font-size:10px; color:var(--mu); min-width:36px; }
+.cg-inp {
+  background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1);
+  color:#fff; padding:4px 6px; border-radius:5px; font-size:11px; width:100%; outline:none;
+}
+.cg-inp:focus { border-color:var(--accent); }
+.cg-textarea {
+  background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1);
+  color:#fff; padding:6px; border-radius:5px; font-size:10px; width:100%; outline:none; resize:vertical;
+  font-family: 'Consolas', monospace;
+}
+.cg-section-title { font-size:10px; font-weight:700; color:var(--accent); margin-top:6px; padding-bottom:4px; border-bottom:1px solid rgba(255,255,255,0.06); }
+
+/* CG bottom toolbar (inside assembly panel) */
+#cg-assembly-toolbar {
+  display:flex; align-items:center; gap:6px; padding:6px 10px;
+  border-top:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.2); flex-shrink:0;
+}
+.cg-tb-btn {
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12);
+  color:#e0e6ed; padding:4px 10px; border-radius:6px; font-size:11px; cursor:pointer;
+  transition:background .15s;
+}
+.cg-tb-btn:hover { background:rgba(255,255,255,0.12); }
+.cg-tb-btn.active { background:rgba(139,92,246,0.25); border-color:#8b5cf6; color:#c4b5fd; }
+
+/* ═══════════════════════════════════════════════════════════
+   MODALS (login, cloud/projects)
+═══════════════════════════════════════════════════════════ */
+.ws-modal-backdrop {
+  position:fixed; inset:0; background:rgba(8,10,20,0.85); backdrop-filter:blur(12px);
+  z-index:5000; display:flex; align-items:center; justify-content:center;
+}
+.ws-modal-backdrop.hidden { display:none; }
+.ws-modal-box {
+  background:rgba(15,20,36,0.98); border:1px solid rgba(255,255,255,0.12);
+  border-radius:16px; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,.7);
+  width:90%; max-height:85vh; overflow-y:auto; position:relative;
+}
+.ws-modal-box h3 { font-size:16px; font-weight:700; margin-bottom:18px; color:#e0e6ed; }
+
+/* Login cards */
+.login-user-card {
+  display:flex; align-items:center; gap:10px; padding:10px 12px;
+  border-left:4px solid #555; border-radius:8px; cursor:pointer; margin-bottom:6px;
+  background:rgba(255,255,255,0.04); transition:background .15s;
+}
+.login-user-card:hover { background:rgba(255,255,255,0.09); }
+.login-user-card.sel { background:rgba(139,92,246,0.2); }
+.login-av {
+  width:34px; height:34px; border-radius:50%; display:flex; align-items:center;
+  justify-content:center; font-weight:800; font-size:14px; color:#fff; flex-shrink:0;
+}
+
+/* Cloud modal tabs */
+.cloud-tab-bar { display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:8px; }
+.cloud-tab { padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; color:var(--mu); border:1px solid transparent; }
+.cloud-tab.on { background:rgba(139,92,246,0.2); border-color:#8b5cf6; color:#c4b5fd; }
+
+/* Generic form inputs for modals */
+.ws-inp {
+  background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.12);
+  color:#fff; padding:8px 10px; border-radius:8px; font-size:12px; outline:none; width:100%;
+}
+.ws-inp:focus { border-color:var(--accent); }
+.ws-btn {
+  padding:8px 18px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; border:none;
+  transition:background .15s; display:inline-flex; align-items:center; gap:6px;
+}
+.ws-btn-p { background:#8b5cf6; color:#fff; }
+.ws-btn-p:hover { background:#7c3aed; }
+.ws-btn-s { background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#e0e6ed; }
+.ws-btn-s:hover { background:rgba(255,255,255,0.14); }
+.ws-btn-g { background:#10b981; color:#fff; }
+.ws-btn-g:hover { background:#059669; }
+.ws-btn-rl { background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#f87171; }
+.ws-btn-rl:hover { background:rgba(239,68,68,0.25); }
+
+/* Cloud list items */
+.cloud-inst-row {
+  display:flex; justify-content:space-between; align-items:center; gap:6px;
+  padding:8px 10px; border:1px solid rgba(255,255,255,0.08); border-radius:7px;
+  margin-bottom:5px; background:rgba(255,255,255,0.03);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NOTE OVERLAY (e+Enter)
+═══════════════════════════════════════════════════════════ */
+#note-overlay {
+  position:fixed; inset:0; z-index:4500; display:none; pointer-events:none;
+}
+#note-input-wrap {
+  position:absolute; background:rgba(15,20,36,0.97); border:1px solid rgba(255,255,255,0.15);
+  border-radius:10px; padding:12px; box-shadow:0 8px 30px rgba(0,0,0,.5);
+  width:320px; pointer-events:all;
+}
+#note-textarea { width:100%; height:80px; resize:none; font-size:12px; }
+#note-word-count { font-size:10px; color:var(--mu); margin-top:4px; }
+
+/* ═══════════════════════════════════════════════════════════
+   EMOJI GRID (global pattern)
+═══════════════════════════════════════════════════════════ */
+.emoji-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:5px; max-height:150px; overflow-y:auto; padding:5px; }
+.emoji-grid div { padding:5px; text-align:center; cursor:pointer; border-radius:4px; }
+.emoji-grid div:hover { background:rgba(255,255,255,0.2); }
+
+/* ═══════════════════════════════════════════════════════════
+   ACCOUNT PANEL (popup)
+═══════════════════════════════════════════════════════════ */
+#account-panel {
+  position:fixed; top:46px; right:10px; z-index:5500;
+  background:rgba(15,20,36,0.98); border:1px solid rgba(255,255,255,0.12);
+  border-radius:12px; padding:14px 16px; box-shadow:0 8px 28px rgba(0,0,0,.5);
+  min-width:200px; max-width:260px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CG ANIM BADGE ON CANVAS
+═══════════════════════════════════════════════════════════ */
+.cg-conn-badge {
+  position:absolute; background:rgba(139,92,246,0.9); color:#fff;
+  font-size:9px; font-weight:700; padding:2px 6px; border-radius:8px;
+  cursor:pointer; z-index:20; white-space:nowrap;
+}
+.cg-copy-badge {
+  position:absolute; top:-2px; left:-2px; background:#f59e0b; color:#000;
+  font-size:8px; font-weight:800; padding:1px 4px; border-radius:4px; z-index:21;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LOGIN OVERLAY (bubble-style PIN removed, modal approach)
+═══════════════════════════════════════════════════════════ */
+#pin-shake { animation:shake .4s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes shake {
+  10%,90% { transform:translate3d(-2px,0,0); }
+  20%,80%  { transform:translate3d(4px,0,0); }
+  30%,50%,70% { transform:translate3d(-8px,0,0); }
+  40%,60% { transform:translate3d(8px,0,0); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TOAST
+═══════════════════════════════════════════════════════════ */
+#ws-toast {
+  position:fixed; bottom:24px; right:20px; z-index:9999;
+  padding:10px 18px; border-radius:10px; font-size:12px; font-weight:700;
+  box-shadow:0 4px 20px rgba(0,0,0,.3); transition:opacity .3s,transform .3s;
+  max-width:320px; pointer-events:none; opacity:0; transform:translateY(12px);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SCROLLBAR (global dark)
+═══════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width:5px; height:5px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); border-radius:3px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ CLOUD BAR ═══════════════ -->
+<div id="cloud-bar">
+  <div id="user-badge"></div>
+  <div class="cloud-bar-sep"></div>
+  <div id="context-bar">
+    <div id="ctx-local">—</div>
+    <div id="ctx-global"></div>
+  </div>
+  <div id="online-users"></div>
+  <div class="cloud-bar-sep"></div>
+  <button class="cb-btn" id="live-btn" onclick="toggleLiveSession()" title="Запустить/остановить Live">⚡ Live</button>
+  <button class="cb-btn save" onclick="approveLocal()" title="Сохранить локально">💾 Локально</button>
+  <button class="cb-btn" id="copy-local-btn" onclick="copyHostLocally()" title="Скопировать локально">📋 Скопировать</button>
+  <button class="cb-btn global-save" onclick="pushToCenter()" title="Сохранить в Supabase">📤 Глобально</button>
+  <button class="cb-btn" id="btn-cloud" onclick="showCloudModal()" title="Проекты и Live сессии" style="position:relative;">🗂 Проекты</button>
+</div>
+
+<!-- ═══════════════ TOOLBAR ═══════════════ -->
+<div id="toolbar" class="glass-panel" style="transition:transform .3s; cursor:grab;">
+  <div id="tb-drag" style="padding:0 10px;cursor:grab;opacity:.5;font-size:18px;display:flex;align-items:center;" title="Перетащить">⋮⋮</div>
+  <div id="fps-counter">60 FPS</div>
+  <div id="tb-content" style="display:flex;gap:10px;align-items:center;">
+    <!-- Create -->
+    <div class="toolbar-group" style="position:relative;">
+      <button id="btn-master-create" style="width:160px;justify-content:space-between;" data-val="main">
+        <span id="btn-master-label">🟡 Создать бабл</span>
+        <span id="btn-master-dd" style="font-size:10px;opacity:.6;padding-left:10px;">▼</span>
+      </button>
+      <div id="create-dropdown" class="dropdown-menu"></div>
+    </div>
+    <div class="divider"></div>
+    <!-- Global Pattern -->
+    <div class="toolbar-group" style="position:relative;display:flex;">
+      <button id="btn-global-pattern" style="justify-content:space-between;width:170px;" title="Глобальный паттерн">
+        <span>🌍 <span id="gp-label" style="font-size:12px;">Выкл</span></span>
+        <span style="font-size:10px;opacity:.6;">▼</span>
+      </button>
+      <div id="gp-dropdown" class="dropdown-menu" style="min-width:280px;left:auto;right:0;">
+        <div style="font-size:11px;color:#a0aabf;margin-bottom:5px;padding:0 5px;">СТИЛЬ ЛИНИИ</div>
+        <div style="display:flex;gap:5px;padding:0 5px;margin-bottom:10px;">
+          <button class="icon-btn gp-mode-btn" data-mode="off" title="Выкл">❌</button>
+          <button class="icon-btn gp-mode-btn" data-mode="pixi_dash" title="Пунктир">---</button>
+          <button class="icon-btn gp-mode-btn" data-mode="dots" title="Точки">...</button>
+          <button class="icon-btn gp-mode-btn" data-mode="pixi_symbols" title="Эмодзи">😀</button>
+          <button class="icon-btn gp-mode-btn" data-mode="pixi_shapes" title="Фигуры">💧</button>
+          <button class="icon-btn gp-mode-btn" data-mode="pixi_energy" title="Энергия">⚡</button>
+        </div>
+        <div style="font-size:11px;color:#a0aabf;margin-bottom:5px;padding:0 5px;">ФИГУРЫ</div>
+        <div style="display:flex;gap:5px;padding:0 5px;margin-bottom:10px;">
+          <button class="icon-btn gp-shape-btn" data-shape="drop">💧</button>
+          <button class="icon-btn gp-shape-btn" data-shape="cube">🧊</button>
+          <button class="icon-btn gp-shape-btn" data-shape="hex">⬡</button>
+          <button class="icon-btn gp-shape-btn" data-shape="dec">⚪</button>
+        </div>
+        <div style="font-size:11px;color:#a0aabf;margin-bottom:5px;padding:0 5px;">ЭМОДЗИ</div>
+        <div style="display:flex;gap:5px;padding:0 5px;margin-bottom:8px;">
+          <input type="text" id="gp-emoji-input" value="✨❤️⭐" style="flex:1;font-size:14px;">
+          <button id="gp-emoji-picker-btn" class="icon-btn" title="Пикер">▼</button>
+        </div>
+        <div id="gp-emoji-picker" class="emoji-grid" style="display:none;border:1px solid rgba(255,255,255,0.1);margin-bottom:10px;background:rgba(0,0,0,0.8);z-index:100;"></div>
+        <div style="font-size:11px;color:#a0aabf;margin-bottom:5px;padding:0 5px;">ПАРАМЕТРЫ</div>
+        <div class="form-group row" style="padding:0 5px;"><label>Размер</label><input type="range" id="gp-size" class="slider-sm" min=".5" max="3" step=".1" value="1"></div>
+        <div class="form-group row" style="padding:0 5px;"><label>Плотность</label><input type="range" id="gp-count" class="slider-sm" min=".1" max="10" step=".1" value="1"></div>
+        <div class="form-group row" style="padding:0 5px;">
+          <label>Скорость</label>
+          <select id="gp-speed-mode" style="padding:2px 4px;font-size:11px;max-width:70px;"><option value="abs" selected>Пикс/сек</option><option value="rel">Сек/линию</option></select>
+          <input type="number" id="gp-speed" min="1" max="1000" step=".5" value="50" style="width:50px;font-size:12px;">
+        </div>
+        <div class="form-group row" style="padding:0 5px;margin-top:5px;"><label>Свечение</label><input type="checkbox" id="gp-has-glow" checked></div>
+        <div class="form-group row" style="padding:0 5px;margin-top:5px;"><label>Траектории</label><input type="checkbox" id="gp-show-lines" checked></div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <!-- Animation -->
+    <div class="toolbar-group">
+      <button id="btn-anim-play" class="icon-btn active" title="Играть">▶️</button>
+      <button id="btn-anim-pause" class="icon-btn" title="Пауза">⏸️</button>
+      <button id="btn-anim-solid" class="icon-btn" title="Сплошные">➖</button>
+    </div>
+    <!-- History -->
+    <div class="toolbar-group" style="margin-left:auto;">
+      <button id="btn-undo" class="icon-btn" disabled title="Назад (Ctrl+Z)">↩</button>
+      <button id="btn-redo" class="icon-btn" disabled title="Вперёд (Ctrl+Y)">↪</button>
+    </div>
+    <div class="divider"></div>
+    <button id="btn-load" style="background:#4a7da3;padding:8px;" title="Загрузить JSON">📂</button>
+    <input type="file" id="file-load" accept=".json" style="display:none;">
+    <button id="btn-save" style="background:#2a7d43;padding:8px;" title="Сохранить JSON">💾</button>
+    <button id="btn-toggle-minimap" class="icon-btn" title="Миникарта (M)" style="font-size:16px;">🗺️</button>
+    <button id="btn-camera-mode" class="icon-btn" style="width:auto;padding:0 8px;font-size:12px;margin-left:5px;">🎥 Ограничена</button>
+  </div>
+  <div id="tb-collapse" style="padding:0 10px;cursor:pointer;opacity:.8;font-size:14px;display:flex;align-items:center;" title="Свернуть">◀</div>
+</div>
+
+<!-- Link tools -->
+<div id="link-tools" class="glass-panel">
+  <div style="display:flex;gap:5px;align-items:center;"><label style="font-size:12px;color:#a0aabf;">Траектория:</label><select id="lt-type" style="padding:4px 8px;font-size:12px;height:auto;"><option value="sharp" selected>Ломаная</option><option value="curved">Плавная</option><option value="ortho">Ортогональная</option><option value="bent">Bent Connector</option></select></div>
+  <div style="display:flex;gap:5px;align-items:center;"><label style="font-size:12px;color:#a0aabf;">Вид:</label><select id="lt-mode" style="padding:4px 8px;font-size:12px;height:auto;"><option value="single" selected>Одинарная</option><option value="double">Двойная</option></select></div>
+  <div style="display:flex;gap:5px;align-items:center;"><label style="font-size:12px;color:#a0aabf;">Цвет:</label><input type="color" id="lt-color" value="#00ffcc" style="width:25px;height:25px;padding:0;border:none;cursor:pointer;background:transparent;"></div>
+</div>
+
+<!-- Bound buttons -->
+<div id="bound-left" class="bound-btn">+</div>
+<div id="bound-right" class="bound-btn">+</div>
+<div id="bound-top" class="bound-btn">+</div>
+<div id="bound-bottom" class="bound-btn">+</div>
+
+<!-- Context menu -->
+<div id="ctx-menu"></div>
+
+<!-- Properties panel -->
+<div id="properties-panel" class="glass-panel" style="display:none;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+    <h3 id="prop-title" style="margin:0;cursor:grab;user-select:none;font-size:13px;"><span style="opacity:.5;margin-right:5px;">⋮⋮</span>Свойства</h3>
+    <button onclick="selectEntity(null,null)" style="background:none;border:none;color:#fff;cursor:pointer;font-size:16px;opacity:.7;" title="Закрыть">✖</button>
+  </div>
+  <div id="global-props" style="display:none;">
+    <div class="layer-box" style="border-color:rgba(0,255,204,.5);background:rgba(0,255,204,.05);">
+      <strong style="font-size:12px;color:#00ffcc;">Глобальный Паттерн</strong>
+      <div class="form-group" style="margin-top:8px;"><label>Режим</label><select id="prop-global-mode"><option value="pixi_dash">Пунктир</option><option value="pixi_shapes">Фигуры</option><option value="pixi_energy">Энергия</option><option value="pixi_symbols">Эмодзи</option></select></div>
+      <div class="form-group" id="wrap-global-shape" style="display:none;margin-top:5px;"><label>Фигура</label><select id="prop-global-shape"><option value="drop">Капля</option><option value="cube">Куб</option><option value="hex">Гексагон</option><option value="dec">Круг</option></select></div>
+      <div class="form-group" id="wrap-global-emojis" style="display:none;margin-top:5px;"><label>Эмодзи</label><input type="text" id="prop-global-emojis" placeholder="❤️⭐✨"></div>
+      <div id="wrap-global-sliders" style="display:none;margin-top:10px;">
+        <div class="form-group"><label>Размер</label><input type="range" id="prop-global-size" min=".1" max="5" step=".1" value="1"></div>
+        <div class="form-group" style="margin-top:5px;"><label>Плотность</label><input type="range" id="prop-global-count" min=".1" max="5" step=".1" value="1"></div>
+        <div class="form-group" style="margin-top:5px;"><label>Болтание (px)</label><input type="range" id="prop-global-wobble" min="0" max="50" step="1" value="0"></div>
+      </div>
+      <div class="form-group row" style="margin-top:12px;"><label style="color:#00ffcc;">🌿 ЭКО</label><input type="checkbox" id="prop-global-eco"></div>
+      <div class="form-group row" style="margin-top:5px;"><label>Скрыть линии</label><input type="checkbox" id="prop-global-hidelines"></div>
+    </div>
+  </div>
+  <div class="form-group" id="prop-name-group"><label>Название</label><input type="text" id="prop-name"></div>
+  <div id="main-bubble-props">
+    <div class="form-group"><label>Форма</label><select id="prop-shape"><option value="circle">Круг</option><option value="square">Квадрат</option></select></div>
+    <div class="form-group"><label>Размер</label><input type="number" id="prop-size" min="100" max="800" step="10"></div>
+  </div>
+  <div id="color-props">
+    <div class="form-group row"><label>Фон (rgba)</label><input type="color" id="prop-bg-color-picker" style="max-width:30px;padding:0;border:none;background:transparent;cursor:pointer;"><input type="text" id="prop-bg-color" style="flex:1;"></div>
+    <div class="form-group row"><label>Контур</label><input type="color" id="prop-border-color" style="max-width:50px;"></div>
+    <div class="form-group row"><label>Свечение</label><input type="color" id="prop-glow-color" style="max-width:50px;"></div>
+  </div>
+  <div id="link-props" style="display:none;">
+    <div class="layer-box" style="border-color:rgba(0,255,204,.5);background:rgba(0,255,204,.05);">
+      <div class="form-group row"><label style="color:#00ffcc;">Глобальные настройки</label><input type="checkbox" id="prop-link-use-global" checked></div>
+      <div class="form-group row" style="margin-top:5px;"><label>Скрыть линии</label><input type="checkbox" id="prop-link-hidelines"></div>
+    </div>
+    <div class="form-group" style="margin-top:10px;"><label>Траектория</label><select id="prop-link-type"><option value="curved">Плавная</option><option value="sharp">Ломаная</option><option value="ortho">Ортогональная</option><option value="bent">Bent Connector</option></select></div>
+    <div class="form-group"><label>Режим линий</label><select id="prop-link-mode"><option value="single">Одинарная</option><option value="double">Двойная</option></select></div>
+    <div class="form-group" id="wrap-gap" style="display:none;"><label>Отступ (px)</label><input type="number" id="prop-link-gap" min="0" max="50"></div>
+    <div class="layer-box">
+      <div class="form-group row"><label>Фон (подложка)</label><input type="checkbox" id="prop-link-hasbg"></div>
+      <div id="wrap-bg-props" style="display:none;margin-top:10px;">
+        <div class="form-group"><label>Цвет фона</label><input type="text" id="prop-link-bgcol"></div>
+        <div class="form-group row" style="margin-top:5px;"><label>Ширина</label><input type="number" id="prop-link-bgwid" min="1" max="100" style="max-width:60px;"></div>
+      </div>
+    </div>
+    <div class="layer-box">
+      <div class="form-group row"><label>Glow</label><input type="checkbox" id="prop-link-hasglow"></div>
+      <div class="form-group row" id="wrap-glow-props" style="display:none;margin-top:5px;"><label>Яркость</label><input type="range" id="prop-link-glowop" min="0" max="100" style="max-width:120px;"></div>
+    </div>
+    <div class="layer-box"><strong style="font-size:12px;">Слой 1</strong>
+      <div class="form-group row" style="margin-top:5px;"><label>Цвет</label><input type="color" id="prop-l1-color" style="max-width:40px;"></div>
+      <div class="form-group row"><label>Ширина</label><input type="number" id="prop-l1-width" min="1" max="20" style="max-width:60px;"></div>
+      <div class="form-group"><label>Анимация</label><select id="prop-l1-anim">
+        <optgroup label="GPU"><option value="none">Нет</option><option value="pixi_dash_fwd">Штрихи→</option><option value="pixi_dash_bwd">Штрихи←</option><option value="pixi_dots_fwd">Точки→</option><option value="pixi_dots_bwd">Точки←</option></optgroup>
+        <optgroup label="Частицы"><option value="pixi_shapes">Фигуры</option><option value="pixi_energy">Энергия</option><option value="pixi_symbols">Эмодзи</option></optgroup>
+      </select></div>
+      <div class="form-group row"><label>Скорость</label>
+        <select id="prop-l1-speed-mode" style="padding:2px 4px;font-size:11px;margin:0 5px;flex:1;"><option value="abs" selected>Пикс/с</option><option value="rel">Сек/линию</option></select>
+        <input type="number" id="prop-l1-speed" min=".1" max="1000" step=".5" value="50" style="width:45px;">
+        <label style="display:flex;align-items:center;gap:2px;margin-left:5px;"><input type="checkbox" id="prop-l1-rev" style="width:12px;height:12px;"> Рев</label>
+      </div>
+      <div id="wrap-l1-part-props" style="display:none;background:rgba(0,0,0,.2);padding:8px;border-radius:6px;margin-top:5px;border:1px solid rgba(0,255,204,.2);">
+        <div class="form-group row" id="wrap-l1-shape"><label>Фигура</label><select id="prop-l1-shape" style="max-width:80px;"><option value="drop">Капля</option><option value="cube">Куб</option><option value="hex">Гексагон</option><option value="dec">Круг</option></select></div>
+        <div class="form-group row" id="wrap-l1-emojis"><label>Эмодзи</label><input type="text" id="prop-l1-emojis" style="max-width:80px;"></div>
+        <div class="form-group row"><label>Размер</label><input type="range" id="prop-l1-size" min=".1" max="5" step=".1" value="1" style="max-width:80px;"></div>
+        <div class="form-group row"><label>Плотность</label><input type="range" id="prop-l1-count" min=".1" max="5" step=".1" value="1" style="max-width:80px;"></div>
+      </div>
+    </div>
+    <div class="layer-box" id="link-layer-2" style="display:none;"><strong style="font-size:12px;">Слой 2</strong>
+      <div class="form-group row" style="margin-top:5px;"><label>Цвет</label><input type="color" id="prop-l2-color" style="max-width:40px;"></div>
+      <div class="form-group row"><label>Ширина</label><input type="number" id="prop-l2-width" min="1" max="20" style="max-width:60px;"></div>
+      <div class="form-group"><label>Анимация</label><select id="prop-l2-anim">
+        <optgroup label="GPU"><option value="none">Нет</option><option value="pixi_dash_fwd">Штрихи→</option><option value="pixi_dash_bwd">Штрихи←</option><option value="pixi_dots_fwd">Точки→</option><option value="pixi_dots_bwd">Точки←</option></optgroup>
+        <optgroup label="Частицы"><option value="pixi_shapes">Фигуры</option><option value="pixi_energy">Энергия</option><option value="pixi_symbols">Эмодзи</option></optgroup>
+      </select></div>
+      <div class="form-group row"><label>Скорость</label>
+        <select id="prop-l2-speed-mode" style="padding:2px 4px;font-size:11px;margin:0 5px;flex:1;"><option value="abs" selected>Пикс/с</option><option value="rel">Сек/линию</option></select>
+        <input type="number" id="prop-l2-speed" min=".1" max="1000" step=".5" value="50" style="width:45px;">
+        <label style="display:flex;align-items:center;gap:2px;margin-left:5px;"><input type="checkbox" id="prop-l2-rev" style="width:12px;height:12px;"> Рев</label>
+      </div>
+      <div id="wrap-l2-part-props" style="display:none;background:rgba(0,0,0,.2);padding:8px;border-radius:6px;margin-top:5px;border:1px solid rgba(0,255,204,.2);">
+        <div class="form-group row" id="wrap-l2-shape"><label>Фигура</label><select id="prop-l2-shape" style="max-width:80px;"><option value="drop">Капля</option><option value="cube">Куб</option><option value="hex">Гексагон</option><option value="dec">Круг</option></select></div>
+        <div class="form-group row" id="wrap-l2-emojis"><label>Эмодзи</label><input type="text" id="prop-l2-emojis" style="max-width:80px;"></div>
+        <div class="form-group row"><label>Размер</label><input type="range" id="prop-l2-size" min=".1" max="5" step=".1" value="1" style="max-width:80px;"></div>
+        <div class="form-group row"><label>Плотность</label><input type="range" id="prop-l2-count" min=".1" max="5" step=".1" value="1" style="max-width:80px;"></div>
+      </div>
+    </div>
+    <div style="margin-top:15px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;"><strong style="font-size:12px;">Надписи</strong><button id="btn-add-label" style="padding:2px 6px;font-size:11px;">+</button></div>
+      <div id="prop-link-labels-list" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+    <button id="btn-delete-link" style="background:#a33;margin-top:15px;width:100%;">Удалить связь</button>
+  </div>
+  <div id="entity-actions" style="margin-top:10px;display:flex;gap:10px;">
+    <button id="btn-copy" style="flex:1;">Копировать</button>
+    <button id="btn-del-entity" style="flex:1;background:#a33;">Удалить</button>
+  </div>
+</div>
+
+<!-- ═══════════════ CG PANELS ═══════════════ -->
+
+<!-- Panel 1: UI Kit -->
+<div id="cg-panel-1" class="cg-panel">
+  <div class="cg-panel-header">
+    <div class="cg-panel-title">🎨 UI Kit <span id="cg-p1-ctx" style="font-size:9px;color:#7a8599;font-weight:400;"></span></div>
+    <button class="cg-panel-close" onclick="closeCGPanel(1)">✕</button>
+  </div>
+  <div style="padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;gap:6px;flex-shrink:0;">
+    <button class="cg-tb-btn active" id="cg-uikit-tab-atoms" onclick="cgUIKitTab('atoms')">Атомы</button>
+    <button class="cg-tb-btn" id="cg-uikit-tab-comps" onclick="cgUIKitTab('comps')">Композиции</button>
+    <button class="cg-tb-btn" id="cg-uikit-tab-newset" onclick="cgUIKitTab('newset')">Новая группа</button>
+  </div>
+  <div class="cg-panel-body">
+    <div id="cg-uikit-atoms-view"><div id="cg-atom-grid-wrap"></div></div>
+    <div id="cg-uikit-comps-view" style="display:none;"><div id="cg-comps-grid" class="cg-atom-grid"></div></div>
+    <div id="cg-uikit-newset-view" style="display:none;">
+      <div style="font-size:11px;color:#a0aabf;margin-bottom:8px;">Выберите атомы, потом «Создать набор»</div>
+      <div id="cg-newset-selected" style="font-size:10px;color:#22c55e;margin-bottom:6px;"></div>
+      <button class="cg-tb-btn" onclick="cgCreateSet()" style="width:100%;">✅ Создать набор</button>
+    </div>
+  </div>
+</div>
+
+<!-- Panel 2: Sets -->
+<div id="cg-panel-2" class="cg-panel">
+  <div class="cg-panel-header">
+    <div class="cg-panel-title">📦 Наборы <span id="cg-p2-ctx" style="font-size:9px;color:#7a8599;font-weight:400;"></span></div>
+    <button class="cg-panel-close" onclick="closeCGPanel(2)">✕</button>
+  </div>
+  <div class="cg-panel-body">
+    <div class="form-group" style="margin-bottom:10px;">
+      <label style="font-size:11px;color:#a0aabf;">Активный набор</label>
+      <select id="cg-set-select" onchange="cgSetChanged()"></select>
+    </div>
+    <button class="cg-tb-btn" onclick="cgTransferSet()" style="width:100%;margin-bottom:8px;">🖼 Перенести на холст</button>
+    <div id="cg-set-preview" class="cg-atom-grid"></div>
+  </div>
+</div>
+
+<!-- Panel 3: Assembly (main CG canvas) -->
+<div id="cg-panel-3" class="cg-panel" style="flex-direction:column;">
+  <div class="cg-panel-header">
+    <div class="cg-panel-title">🔧 Сборка <span id="cg-p3-ctx" style="font-size:9px;color:#7a8599;font-weight:400;"></span></div>
+    <div style="display:flex;gap:4px;align-items:center;">
+      <button class="cg-tb-btn" id="cg-anim-btn" onclick="cgAnimate()" title="Анимировать выбранные">✨ Анимировать</button>
+      <button class="cg-panel-close" onclick="closeCGPanel(3)">✕</button>
+    </div>
+  </div>
+  <div id="cg-assembly-toolbar">
+    <button class="cg-tb-btn" id="cg-multi-sel-btn" onclick="cgToggleMulti()" title="Мультиселект (Shift+клик)">⊞ Выделить</button>
+    <button class="cg-tb-btn" onclick="cgClearCanvas()" title="Очистить холст">🗑 Очистить</button>
+    <div style="flex:1;"></div>
+    <button class="cg-tb-btn" onclick="cgToggleProps()" id="cg-props-toggle-btn">📐 Свойства</button>
+    <button class="cg-tb-btn" onclick="cgShowPreview()">👁 Превью</button>
+  </div>
+  <div style="flex:1;position:relative;overflow:hidden;">
+    <div id="cg-canvas-wrap">
+      <div id="cg-ca">
+        <div id="cg-cvf">
+          <svg id="cg-svg-overlay"><defs><marker id="cg-arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#8b5cf6"/></marker></defs></svg>
+        </div>
+      </div>
+    </div>
+    <div id="cg-props-sidebar">
+      <div class="cg-section-title">CSS</div>
+      <textarea id="cg-prop-css" class="cg-textarea" rows="5" onchange="cgApplyCSS()" style="height:120px;"></textarea>
+      <div class="cg-section-title" style="margin-top:6px;">HTML</div>
+      <textarea id="cg-prop-html" class="cg-textarea" rows="3" onchange="cgApplyHTML()" style="height:70px;"></textarea>
+      <div class="cg-section-title" style="margin-top:6px;">JS</div>
+      <textarea id="cg-prop-js" class="cg-textarea" rows="2" onchange="cgApplyJS()" style="height:50px;"></textarea>
+      <div class="cg-section-title" style="margin-top:6px;">БЛОК МОДЕЛЬ</div>
+      <div id="cg-box-model"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Panel 4: Export -->
+<div id="cg-panel-4" class="cg-panel">
+  <div class="cg-panel-header">
+    <div class="cg-panel-title">📤 Экспорт <span id="cg-p4-ctx" style="font-size:9px;color:#7a8599;font-weight:400;"></span></div>
+    <button class="cg-panel-close" onclick="closeCGPanel(4)">✕</button>
+  </div>
+  <div class="cg-panel-body" style="display:flex;flex-direction:column;gap:8px;">
+    <iframe id="cg-export-preview" style="flex:1;min-height:280px;width:100%;border:none;border-radius:6px;background:#fff;"></iframe>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button class="cg-tb-btn" onclick="cgRefreshExport()" style="flex:1;">🔄 Обновить</button>
+      <button class="cg-tb-btn" onclick="cgDownloadHTML()" style="flex:1;">⬇ HTML</button>
+      <button class="cg-tb-btn" onclick="cgSaveComp()" style="flex:1;">💾 Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Panel 5: Gallery -->
+<div id="cg-panel-5" class="cg-panel">
+  <div class="cg-panel-header">
+    <div class="cg-panel-title">🖼 Галерея <span id="cg-p5-ctx" style="font-size:9px;color:#7a8599;font-weight:400;"></span></div>
+    <button class="cg-panel-close" onclick="closeCGPanel(5)">✕</button>
+  </div>
+  <div class="cg-panel-body">
+    <div id="cg-gallery-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ MINIMAP ═══════════════ -->
+<div id="minimap-hud" class="glass-panel">
+  <canvas id="minimap-canvas" style="width:100%;height:100%;display:block;cursor:crosshair;"></canvas>
+  <div style="position:absolute;top:5px;right:5px;display:flex;gap:2px;">
+    <div id="minimap-drag" class="minimap-ctrl" title="Перетащить">⠿</div>
+    <div id="minimap-minimize" class="minimap-ctrl" title="Свернуть">_</div>
+    <div id="minimap-resize" class="minimap-ctrl" title="Размер">🔳</div>
+    <div id="minimap-close" class="minimap-ctrl" title="Закрыть">❌</div>
+  </div>
+</div>
+
+<!-- ═══════════════ PixiJS CANVAS ═══════════════ -->
+<canvas id="pixi-canvas"></canvas>
+
+<!-- ═══════════════ LOGIN MODAL ═══════════════ -->
+<div id="ws-login-modal" class="ws-modal-backdrop hidden">
+  <div class="ws-modal-box" style="max-width:380px;">
+    <h3 id="login-modal-title" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>👤 Войти</span>
+      <span id="login-modal-close" onclick="closeLoginModal()" style="cursor:pointer;color:#7a8599;font-size:20px;display:none;">×</span>
+    </h3>
+    <div id="login-user-list"></div>
+    <div style="margin-top:12px;">
+      <label style="font-size:11px;color:#7a8599;display:block;margin-bottom:4px;">Пароль:</label>
+      <input id="login-pass" type="password" class="ws-inp" placeholder="Введите пароль..." onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="ws-btn ws-btn-p" onclick="doLogin()" style="flex:1;">Войти</button>
+    </div>
+    <p style="font-size:10px;color:#7a8599;margin-top:10px;text-align:center;">Пароли задаются в <code>supabase-config.js</code></p>
+  </div>
+</div>
+
+<!-- ═══════════════ CLOUD / PROJECTS MODAL ═══════════════ -->
+<div id="ws-cloud-modal" class="ws-modal-backdrop hidden">
+  <div class="ws-modal-box" style="max-width:680px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <h3 style="margin:0;">☁ Облако &amp; Live</h3>
+      <button onclick="closeCloudModal()" style="background:none;border:none;color:#7a8599;font-size:20px;cursor:pointer;">×</button>
+    </div>
+    <div class="cloud-tab-bar">
+      <div class="cloud-tab on" id="ctab-central" onclick="switchCloudTab('central')">🌐 Центральные</div>
+      <div class="cloud-tab" id="ctab-live" onclick="switchCloudTab('live')">📡 Live</div>
+      <div class="cloud-tab" id="ctab-local" onclick="switchCloudTab('local')">💾 Локальные</div>
+    </div>
+    <div id="ctab-central-panel">
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <input id="cloud-project-name" type="text" class="ws-inp" placeholder="Название проекта (project_1)" style="flex:1;">
+        <button class="ws-btn ws-btn-g" onclick="pushToCenter()">📤 Сохранить</button>
+      </div>
+      <div id="cloud-central-list"><div style="color:#7a8599;font-size:12px;padding:10px;">Загрузка...</div></div>
+    </div>
+    <div id="ctab-live-panel" style="display:none;">
+      <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;">
+        <button class="ws-btn ws-btn-p" onclick="toggleLiveSession()" id="cloud-live-toggle-btn">⚡ Запустить Live</button>
+        <span style="font-size:11px;color:#7a8599;">Ваша Live-сессия доступна другим</span>
+      </div>
+      <div id="cloud-live-list"><div style="color:#7a8599;font-size:12px;padding:10px;">Загрузка...</div></div>
+    </div>
+    <div id="ctab-local-panel" style="display:none;">
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <input id="local-save-name" type="text" class="ws-inp" placeholder="Название локального сохранения" style="flex:1;">
+        <button class="ws-btn ws-btn-s" onclick="approveLocal()">💾 Сохранить</button>
+      </div>
+      <div id="cloud-local-list"><div style="color:#7a8599;font-size:12px;padding:10px;">Локальных сохранений нет</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ NOTE OVERLAY ═══════════════ -->
+<div id="note-overlay">
+  <div id="note-input-wrap">
+    <div style="font-size:11px;font-weight:700;color:#e0e6ed;margin-bottom:6px;">📌 Заметка (видна всем)</div>
+    <textarea id="note-textarea" class="cg-textarea" placeholder="Введите заметку..."></textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+      <span id="note-word-count" style="font-size:10px;color:#7a8599;">0 слов</span>
+      <div style="display:flex;gap:6px;">
+        <button class="ws-btn ws-btn-s" onclick="cancelNote()" style="font-size:11px;padding:4px 10px;">Отмена</button>
+        <button class="ws-btn ws-btn-p" onclick="submitNote()" style="font-size:11px;padding:4px 10px;">Прикрепить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="ws-toast"></div>
+
+<!-- Canvas context prevention -->
+<script>
+  document.getElementById('pixi-canvas').addEventListener('contextmenu', e => e.preventDefault());
+  document.addEventListener('click', e => { let cm = document.getElementById('ctx-menu'); if (cm && !cm.contains(e.target)) cm.style.display = 'none'; });
+</script>
+
+<!-- Supabase config (TEAM_USERS, SUPA_URL, SUPA_KEY) -->
+<script src="supabase-config.js"></script>
+<!-- Bubble canvas engine (PixiJS) — runs immediately, exposes _bubbleSetUser, getBubbleState etc. -->
+<script src="example/bubble_tabs_pixi_engine.js"></script>
+<!-- Workspace integration layer: Supabase auth, cloud save/load, live sessions, CG panels -->
+<script src="workspace_engine.js"></script>
+<!-- CG tab rendering inside panels -->
+<script src="workspace_cg.js"></script>
+<!-- Start integration layer (bubble engine already running) -->
+<script>initWorkspace();</script>
+</body>
+</html>
