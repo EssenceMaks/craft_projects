@@ -74,6 +74,9 @@ function _restoreSession() {
       SC.user = saved;
       window._bubbleSetUser && window._bubbleSetUser(saved);
       renderUserBadge();
+      // Restore theme and background style for this user
+      typeof window._loadSavedTheme    === 'function' && window._loadSavedTheme();
+      typeof window._loadSavedBgStyle  === 'function' && window._loadSavedBgStyle();
       setTimeout(_joinGlobalChannel, 800);
       _restoreDraft(); return;
     }
@@ -124,34 +127,91 @@ window.doLogin = function() {
   localStorage.setItem('ws_user', JSON.stringify(SC.user));
   window._bubbleSetUser && window._bubbleSetUser(SC.user);
   renderUserBadge(); closeLoginModal();
-  wsToast('Привет, '+u.name+'!','success');
+  // Apply saved theme and background style for this user
+  typeof window._loadSavedTheme    === 'function' && window._loadSavedTheme();
+  typeof window._loadSavedBgStyle  === 'function' && window._loadSavedBgStyle();
+  wsToast('Привет, '+u.name+'! 👋','success');
   _restoreDraft();
-  setTimeout(_joinGlobalChannel, 600);
+  // Re-join global channel after brief delay (allows Supabase client to settle)
+  setTimeout(_joinGlobalChannel, 500);
 };
 
 window.showAccountPanel = function() {
-  document.getElementById('account-panel')?.remove();
+  const panel = document.getElementById('account-panel');
+  if (!panel) return;
+  if (panel.classList.contains('visible')) { closeAccountPanel(); return; }
   if (!SC.user) { showLoginModal(); return; }
-  const u = SC.user;
-  const p = document.createElement('div'); p.id='account-panel';
-  p.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-    <div style="display:flex;gap:8px;align-items:center;">
-      <span style="background:${u.color};color:#fff;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;">${u.av}</span>
-      <div><div style="font-weight:700;font-size:13px;color:#e0e6ed;">${u.name}</div><div style="font-size:10px;color:#7a8599;">@${u.id}</div></div>
-    </div>
-    <span onclick="closeAccountPanel()" style="cursor:pointer;color:#7a8599;font-size:18px;">×</span>
-  </div>
-  <div style="font-size:10px;color:#7a8599;margin-bottom:10px;border-top:1px solid rgba(255,255,255,.08);padding-top:8px;">
-    ${SC.liveMode?'<span style="color:#22c55e;font-weight:700;">● LIVE&nbsp;</span>':''}${SC.watchMode?'<span style="color:#3b82f6;font-weight:700;">✏️ Совм.&nbsp;</span>':''}
-    ${SC.workingMode==='central'?'🌐 '+(SC.currentInstanceId||'центральный'):SC.workingMode==='local'?'💾 '+(SC.currentLocalSave||'локальный'):SC.projectBase?'📁 '+SC.projectBase:'― черновик'}
-  </div>
-  <button class="ws-btn ws-btn-s" onclick="_switchAccount()" style="width:100%;font-size:11px;margin-bottom:6px;">🔄 Сменить</button>
-  <button class="ws-btn ws-btn-rl" onclick="_confirmLogout()" style="width:100%;font-size:11px;">→ Выйти</button>`;
-  document.body.appendChild(p);
-  setTimeout(()=>document.addEventListener('mousedown',_apClose,{once:true}),50);
+  _renderAccountPanel();
+  panel.classList.add('visible');
+  setTimeout(()=>document.addEventListener('pointerdown',_apClose,{once:true}),60);
 };
-function _apClose(e) { if (!document.getElementById('account-panel')?.contains(e.target)) closeAccountPanel(); }
-window.closeAccountPanel = function() { document.getElementById('account-panel')?.remove(); document.removeEventListener('mousedown',_apClose); };
+function _apClose(e) {
+  const panel = document.getElementById('account-panel');
+  if (!panel) return;
+  if (!panel.contains(e.target) && e.target.id !== 'cb-user-btn' && !e.target.closest('#cb-user-btn'))
+    closeAccountPanel();
+}
+window.closeAccountPanel = function() {
+  document.getElementById('account-panel')?.classList.remove('visible');
+  document.removeEventListener('pointerdown',_apClose);
+};
+function _renderAccountPanel() {
+  const panel = document.getElementById('account-panel');
+  if (!panel||!SC.user) return;
+  const u = SC.user;
+  const curTheme = localStorage.getItem('ws_theme_'+u.id)||'void';
+  const curBg    = localStorage.getItem('ws_bg_'+u.id)||'none';
+  const themes   = window.WS_THEMES || [];
+  const bgStyles = window.WS_BG_STYLES || [];
+  const statusHtml = SC.liveMode
+    ? '<span style="color:#22c55e;font-weight:700;">● LIVE</span>'
+    : SC.watchMode
+      ? '<span style="color:#3b82f6;font-weight:700;">'+(SC.watchReadOnly?'👁 Наблюд.':'✏️ Совм.')+'</span>'
+      : '';
+  const projectHtml = SC.workingMode==='central'&&SC.currentInstanceId
+    ? '🌐 '+SC.currentInstanceId
+    : SC.workingMode==='local'&&SC.currentLocalSave
+      ? '💾 '+SC.currentLocalSave
+      : SC.projectBase ? '📁 '+SC.projectBase : '― черновик';
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px;">
+      <div class="acc-user-row" style="margin-bottom:0;">
+        <div class="acc-av" style="background:${u.color}">${u.av}</div>
+        <div><div class="acc-name">${u.name}</div><div class="acc-id">@${u.id}</div></div>
+      </div>
+      <span onclick="closeAccountPanel()" style="cursor:pointer;color:var(--mu,#7a8599);font-size:18px;line-height:1;padding:2px 4px;">×</span>
+    </div>
+    <div class="acc-status">${statusHtml}${statusHtml?' · ':''}${projectHtml}</div>
+    <div class="acc-sep"></div>
+    <div class="acc-section-label">Тема</div>
+    <div class="acc-theme-row">
+      ${themes.map(t=>`<span class="acc-theme-dot${curTheme===t.id?' active':''}"
+        title="${t.label}" style="background:${t.dot}"
+        onclick="window.applyTheme('${t.id}');_renderAccountPanel()"></span>`).join('')}
+    </div>
+    <div class="acc-section-label" style="margin-top:8px;">Фон холста</div>
+    <div class="acc-bg-row">
+      ${bgStyles.map(s=>`<span class="acc-bg-btn${curBg===s.id?' active':''}"
+        onclick="window.applyBgStyle('${s.id}');_renderAccountPanel()">${s.label}</span>`).join('')}
+    </div>
+    <div class="acc-sep"></div>
+    <div class="acc-item" onclick="approveLocal();closeAccountPanel()">
+      <span>💾</span> Сохранить локально
+    </div>
+    <div class="acc-item" onclick="pushToCenter();closeAccountPanel()">
+      <span>📤</span> Сохранить в облако
+    </div>
+    <div class="acc-item" onclick="showCloudModal();closeAccountPanel()">
+      <span>🗂</span> Проекты и Live
+    </div>
+    <div class="acc-sep"></div>
+    <div class="acc-item" onclick="_switchAccount()">
+      <span>🔄</span> Сменить пользователя
+    </div>
+    <div class="acc-item danger" onclick="_confirmLogout()">
+      <span>→</span> Выйти
+    </div>`;
+}
 window._switchAccount = function() {
   closeAccountPanel();
   if ((SC.liveMode||SC.watchMode)&&!confirm('Вы в активной сессии. Продолжить?')) return;
@@ -161,29 +221,72 @@ window._switchAccount = function() {
 window._confirmLogout = function() {
   closeAccountPanel();
   if ((SC.liveMode||SC.watchMode)&&!confirm('Выйти из активной сессии?')) return;
-  if (SC.liveMode) stopLiveSession(); if (SC.watchMode) _stopWatching();
+  if (SC.liveMode) stopLiveSession();
+  if (SC.watchMode) _stopWatching();
+  // Unsubscribe global channel so next user can join fresh
+  if (SC.globalChannel) {
+    try { SC.globalChannel.unsubscribe(); } catch(e) {}
+    SC.globalChannel = null;
+  }
   SC.user=null; localStorage.removeItem('ws_user');
   window._bubbleSetUser && window._bubbleSetUser(null);
   renderUserBadge(); showLoginModal();
+  wsToast('Вы вышли из аккаунта','info');
 };
 
 function renderUserBadge() {
-  const b = document.getElementById('user-badge'); if (!b) return;
-  b.innerHTML = SC.user
-    ? `<span style="background:${SC.user.color};color:#fff;padding:3px 9px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;" onclick="showAccountPanel()">${SC.user.av} ${SC.user.name}</span>`
-    : `<button class="cb-btn" onclick="showLoginModal()">Войти</button>`;
+  // Update legacy #user-badge if present
+  const b = document.getElementById('user-badge');
+  if (b) {
+    b.innerHTML = SC.user
+      ? `<span style="background:${SC.user.color};color:#fff;padding:3px 9px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;" onclick="showAccountPanel()">${SC.user.av} ${SC.user.name}</span>`
+      : `<button class="cb-btn" onclick="showLoginModal()">Войти</button>`;
+  }
+  // Update new cloud-bar user elements
+  const cbAv   = document.getElementById('cb-user-av');
+  const cbName = document.getElementById('cb-user-name');
+  if (cbAv && cbName) {
+    if (SC.user) {
+      cbAv.textContent      = SC.user.av;
+      cbAv.style.background = SC.user.color;
+      cbName.textContent    = SC.user.name;
+    } else {
+      cbAv.textContent      = '?';
+      cbAv.style.background = 'var(--mu,#7a8599)';
+      cbName.textContent    = 'Войти';
+    }
+  }
   _renderContextBar();
 }
 
 function _renderContextBar() {
-  const cL=document.getElementById('ctx-local'), cG=document.getElementById('ctx-global'); if (!cL) return;
-  if (!SC.user) { cL.textContent='—'; cG.textContent=''; return; }
-  let who=SC.user.av+' '+SC.user.name;
-  if (SC.watchMode&&SC.watchTarget) { const h=TEAM_USERS.find(x=>x.id===SC.watchTarget); who+=(SC.watchReadOnly?'  👁 ':'  ✏️ ')+(h?.name||SC.watchTarget); }
-  else if (SC.liveMode) who+='  📡 LIVE';
-  cL.textContent=who;
-  let vl=SC.workingMode==='central'&&SC.currentInstanceId?'🌐 '+SC.currentInstanceId:SC.workingMode==='local'&&SC.currentLocalSave?'💾 '+SC.currentLocalSave:SC.projectBase?'📁 '+SC.projectBase:'― черновик';
-  cG.textContent=vl;
+  const cL  = document.getElementById('ctx-local');
+  const cPN = document.getElementById('cb-project-name');
+  const cG  = document.getElementById('ctx-global');
+
+  if (!SC.user) {
+    if (cL)  cL.textContent  = '\u2014';
+    if (cPN) cPN.textContent = '\u2014 \u0447\u0435\u0440\u043d\u043e\u0432\u0438\u043a';
+    if (cG)  cG.textContent  = '';
+    return;
+  }
+
+  // Project name line (cb-project-name): base + instance shorthand
+  const base = SC.projectBase || 'draft';
+  const modeIcon = SC.workingMode === 'central' ? '\ud83c\udf10' : SC.workingMode === 'local' ? '\ud83d\udcbe' : '\ud83d\udcc1';
+  const projText = modeIcon + ' ' + base + (SC.currentInstanceId ? ' \u00b7 #' + (SC.currentInstanceId.match(/_(\d+)$/) || ['','?'])[1] : '');
+  if (cPN) cPN.textContent = SC.projectBase ? projText : '\u2015 \u0447\u0435\u0440\u043d\u043e\u0432\u0438\u043a';
+  if (cL)  cL.textContent  = SC.projectBase ? projText : '\u2015 \u0447\u0435\u0440\u043d\u043e\u0432\u0438\u043a';
+
+  // Second line (ctx-global): mode status
+  let modeStr = '';
+  if (SC.liveMode) {
+    modeStr = '\u25cf LIVE';
+  } else if (SC.watchMode && SC.watchTarget) {
+    const h = TEAM_USERS.find(x => x.id === SC.watchTarget);
+    modeStr = (SC.watchReadOnly ? '\ud83d\udc41 ' : '\u270f\ufe0f ') + (h?.name || SC.watchTarget);
+  }
+  if (cG) cG.textContent = modeStr;
 }
 
 // ── SNAPSHOT HELPERS ───────────────────────────────────────────
@@ -440,7 +543,7 @@ async function startLiveSession() {
   SC.channel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_applyCGUpdate(payload);});
   SC.channel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_updateCursor(payload);});
   SC.channel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
-  await SC.channel.subscribe(async s=>{if(s==='SUBSCRIBED')await SC.channel.track({user:SC.user.name,color:SC.user.color,av:SC.user.av});});
+  await SC.channel.subscribe(async s=>{if(s==='SUBSCRIBED')await SC.channel.track({id:SC.user.id,user:SC.user.name,name:SC.user.name,color:SC.user.color,av:SC.user.av,live:true});});
   SC.liveMode=true; _startLiveAuto(); _updateLiveUI('live',SC.user.name);
   wsToast('● LIVE активен','success');
   _globalBroadcast('go_live',{uid:SC.user.id,name:SC.user.name,color:SC.user.color,av:SC.user.av}); _updateGlobalPresence(true);
@@ -463,9 +566,9 @@ window.watchLive = async function(targetId,readOnly) {
   const _wpb=()=>SC.projectBase||'default';
   SC.watchChannel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_applySnap(payload);});
   SC.watchChannel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_applyCGUpdate(payload);});
-  SC.watchChannel.on('broadcast',{event:'cursor'},({payload})=>{if(!payload.pb||payload.pb===_wpb())_updateCursor(payload);});
+  SC.watchChannel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_updateCursor(payload);});
   SC.watchChannel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
-  await SC.watchChannel.subscribe(async s=>{if(s==='SUBSCRIBED'){await SC.watchChannel.track({user:SC.user.name,color:SC.user.color,av:SC.user.av});SC.watchChannel.send({type:'broadcast',event:'request_sync',payload:{}});}});
+  await SC.watchChannel.subscribe(async s=>{if(s==='SUBSCRIBED'){await SC.watchChannel.track({id:SC.user.id,user:SC.user.name,name:SC.user.name,color:SC.user.color,av:SC.user.av,live:false});SC.watchChannel.send({type:'broadcast',event:'request_sync',payload:{}});}});
   SC.watchMode=true; SC.watchReadOnly=readOnly===true; SC.watchTarget=targetId;
   const u=TEAM_USERS.find(x=>x.id===targetId);
   _updateLiveUI('watch',(SC.watchReadOnly?'👁 ':'✏️ ')+(u?.name||targetId));
@@ -519,27 +622,61 @@ function _updateCursor({uid,name,color,av,x,y}){
   const wc=window.worldContainer; if (!wc)return;
   const sx=x*wc.scale.x+wc.x, sy=y*wc.scale.y+wc.y;
   let layer=document.getElementById('ws-cursor-layer');
-  if (!layer){layer=document.createElement('div');layer.id='ws-cursor-layer';layer.style.cssText='position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:1800;';document.body.appendChild(layer);}
+  if (!layer){ // fallback if somehow missing
+    layer=document.createElement('div');layer.id='ws-cursor-layer';
+    layer.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:1800;overflow:hidden;';
+    document.body.appendChild(layer);
+  }
   let cur=SC.liveCursors[uid];
   if (!cur){cur=document.createElement('div');cur.style.cssText='position:absolute;pointer-events:none;transition:left .06s,top .06s;';cur.innerHTML=`<svg width="14" height="20" viewBox="0 0 14 20"><path d="M1 1L1 16L5 12L8 19L10 18L7 11L13 11Z" fill="${color}" stroke="#fff" stroke-width="1"/></svg><div style="background:${color};color:#fff;font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;white-space:nowrap;">${av} ${name}</div>`;layer.appendChild(cur);SC.liveCursors[uid]=cur;}
   cur.style.left=sx+'px';cur.style.top=sy+'px';
 }
-function _clearCursors(){document.getElementById('ws-cursor-layer')?.remove();SC.liveCursors={};}
-function _renderOnlineUsers(st){const c=document.getElementById('online-users');if(!c)return;c.innerHTML=Object.values(st).flat().map(u=>`<span title="${u.user}" style="background:${u.color||'#8b5cf6'};color:#fff;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;margin-left:3px;">${u.av||(u.user||'?')[0]}</span>`).join('');}
+function _clearCursors(){
+  const layer=document.getElementById('ws-cursor-layer');
+  if (layer) layer.innerHTML=''; // static element — clear contents, do NOT remove
+  SC.liveCursors={};
+}
+function _renderOnlineUsers(st){
+  const c=document.getElementById('online-users'); if(!c)return;
+  c.innerHTML=Object.values(st).flat()
+    .filter(u=>u&&(u.id||u.user)!==(SC.user?.id||SC.user?.name))
+    .map(u=>`<div class="ou-av" title="${u.name||u.user||'?'}" style="--user-color:${u.color||'#8b5cf6'};background:${u.color||'#8b5cf6'}">${u.av||(u.name||u.user||'?')[0]}</div>`)
+    .join('');
+}
 
 // ── GLOBAL CHANNEL ─────────────────────────────────────────────
 function _joinGlobalChannel(){
-  if (!SC.client||!SC.user||SC.globalChannel)return;
+  if (!SC.client||!SC.user)return;
+  // Unsubscribe stale channel from a previous user session
+  if (SC.globalChannel) {
+    try { SC.globalChannel.unsubscribe(); } catch(e) {}
+    SC.globalChannel = null;
+  }
   const ch=SC.client.channel('cg_global',{config:{broadcast:{self:false},presence:{key:SC.user.id}}});
   ch.on('presence',{event:'sync'},()=>{const anyLive=Object.values(ch.presenceState()).flat().some(u=>u.live&&u.user!==SC.user?.name);_setLiveDot(anyLive);});
   ch.on('broadcast',{event:'go_live'},({payload})=>{if(payload.uid===SC.user?.id)return;const u=TEAM_USERS.find(x=>x.id===payload.uid);wsToast('● '+(u?.name||payload.uid)+' начал Live!','info');_setLiveDot(true);if(!document.getElementById('ws-cloud-modal')?.classList.contains('hidden'))refreshCloudModal();});
   ch.on('broadcast',{event:'go_offline'},()=>{if(!document.getElementById('ws-cloud-modal')?.classList.contains('hidden'))refreshCloudModal();setTimeout(()=>{if(SC.client)SC.client.from('projects').select('id').eq('live',true).ilike('id','live_%').then(({data})=>_setLiveDot((data||[]).length>0));},2000);});
-  ch.subscribe(async s=>{if(s==='SUBSCRIBED')await ch.track({user:SC.user.name,color:SC.user.color,av:SC.user.av,live:SC.liveMode});});
+  ch.subscribe(async s=>{if(s==='SUBSCRIBED')await ch.track({id:SC.user.id,user:SC.user.name,name:SC.user.name,color:SC.user.color,av:SC.user.av,live:SC.liveMode});});
   SC.globalChannel=ch;
 }
 function _globalBroadcast(ev,p){if(SC.globalChannel)SC.globalChannel.send({type:'broadcast',event:ev,payload:p}).catch(()=>{});}
 function _updateGlobalPresence(l){if(SC.globalChannel&&SC.user)SC.globalChannel.track({user:SC.user.name,color:SC.user.color,av:SC.user.av,live:l}).catch(()=>{});}
-function _setLiveDot(show){const btn=document.getElementById('btn-cloud');if(!btn)return;let dot=document.getElementById('global-live-dot');if(show){if(!dot){dot=document.createElement('span');dot.id='global-live-dot';dot.style.cssText='position:absolute;top:3px;right:3px;width:7px;height:7px;background:#22c55e;border-radius:50%;border:1.5px solid rgba(15,20,36,.9);pointer-events:none;';btn.style.position='relative';btn.appendChild(dot);}}else dot?.remove();}
+function _setLiveDot(show){
+  // Use static CSS class toggle approach (element lives in CSS, not created dynamically)
+  const dot = document.getElementById('global-live-dot');
+  if (dot) { dot.classList.toggle('visible', !!show); return; }
+  // Legacy fallback: dynamic creation inside #btn-cloud
+  const btn = document.getElementById('btn-cloud'); if (!btn) return;
+  let d = btn.querySelector('.live-dot-legacy');
+  if (show) {
+    if (!d) {
+      d = document.createElement('span');
+      d.className = 'live-dot-legacy';
+      d.style.cssText = 'position:absolute;top:3px;right:3px;width:7px;height:7px;background:#22c55e;border-radius:50%;border:1.5px solid rgba(15,20,36,.9);pointer-events:none;animation:pulse-dot 2s infinite;';
+      btn.appendChild(d);
+    }
+  } else d?.remove();
+}
 
 // ── NOTES ──────────────────────────────────────────────────────
 function _noteKeyHandler(e){

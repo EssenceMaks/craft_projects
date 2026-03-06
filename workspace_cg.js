@@ -534,7 +534,15 @@ function _forwardWheelToCanvas(e) {
 }
 
 // ── Legacy stubs (kept for any lingering references) ─────────────
-window.createDefaultCGData = function() { return {}; };
+window.createDefaultCGData = function() {
+  return {
+    items: [], connections: [],
+    selId: null, selIds: [], selIsCopy: false, selConnId: null,
+    uiKit: getDefaultUIKit(),
+    sets:  [],
+    comps: [],
+  };
+};
 window.cgRenderCanvas      = function() {};
 window.cgOpenTab           = function() {};
 // NOTE: broadcastCGUpdate is intentionally NOT overridden here —

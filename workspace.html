@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Workspace — Bubble + Component Generator</title>
 <script src="https://pixijs.download/v7.3.2/pixi.min.js"></script>
+<!-- PixiJS bridge: exposes _pixiApp + theme/bg helpers. MUST load before engine. -->
+<script src="workspace_ext.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link rel="stylesheet" href="https://unpkg.com/lucide-static@latest/font/lucide.css">
 <style>
@@ -31,6 +33,7 @@ html, body { width:100vw; height:100vh; overflow:hidden; background:var(--bg); c
    PIXI CANVAS
 ═══════════════════════════════════════════════════════════ */
 #pixi-canvas { position:absolute; top:0; left:0; width:100%; height:100%; z-index:1; }
+/* bg-layer sits ABOVE pixi canvas (z=2) but below toolbar/panels — creates visible bg pattern overlay */
 
 /* ═══════════════════════════════════════════════════════════
    CLOUD BAR (top header — from CG project)
@@ -42,10 +45,25 @@ html, body { width:100vw; height:100vh; overflow:hidden; background:var(--bg); c
   backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
 }
 #context-bar { flex:1; display:flex; flex-direction:column; justify-content:center; gap:1px; min-width:0; }
-#ctx-local  { font-size:11px; font-weight:700; color:#e0e6ed; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-#ctx-global { font-size:10px; color:#7a8599; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#ctx-local  { font-size:11px; font-weight:700; color:var(--text,#e0e6ed); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#ctx-global { font-size:10px; color:var(--mu,#7a8599); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 #user-badge { flex-shrink:0; }
-#online-users { display:flex; gap:3px; flex-shrink:0; }
+#online-users { display:flex; gap:0; flex-shrink:0; }
+/* User avatar button in cloud bar */
+#cb-user-btn {
+  height:30px; padding:0 8px 0 4px; border-radius:8px; font-size:12px;
+  display:flex; align-items:center; gap:6px;
+  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12);
+  color:var(--text,#e0e6ed); cursor:pointer; transition:background .15s; flex-shrink:0;
+}
+#cb-user-btn:hover { background:rgba(255,255,255,0.1); }
+#cb-user-av {
+  width:22px; height:22px; border-radius:50%; background:var(--p,#8b5cf6);
+  color:#fff; font-size:10px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+#cb-user-name { max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:600; }
+#cb-project-name { cursor:default; }
 .cloud-bar-sep { width:1px; height:20px; background:rgba(255,255,255,0.12); flex-shrink:0; }
 .cb-btn {
   display:inline-flex; align-items:center; gap:4px;
@@ -59,6 +77,7 @@ html, body { width:100vw; height:100vh; overflow:hidden; background:var(--bg); c
 .cb-btn.save  { background:rgba(16,185,129,0.15); border-color:#10b981; color:#10b981; }
 .cb-btn.global-save { background:rgba(139,92,246,0.15); border-color:#8b5cf6; color:#8b5cf6; }
 #copy-local-btn { display:none; }
+#btn-cloud { position:relative; }
 
 /* ═══════════════════════════════════════════════════════════
    GLASS PANEL (shared utility)
@@ -262,16 +281,6 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
 .emoji-grid div:hover { background:rgba(255,255,255,0.2); }
 
 /* ═══════════════════════════════════════════════════════════
-   ACCOUNT PANEL (popup)
-═══════════════════════════════════════════════════════════ */
-#account-panel {
-  position:fixed; top:46px; right:10px; z-index:5500;
-  background:rgba(15,20,36,0.98); border:1px solid rgba(255,255,255,0.12);
-  border-radius:12px; padding:14px 16px; box-shadow:0 8px 28px rgba(0,0,0,.5);
-  min-width:200px; max-width:260px;
-}
-
-/* ═══════════════════════════════════════════════════════════
    CG ANIM BADGE ON CANVAS
 ═══════════════════════════════════════════════════════════ */
 .cg-conn-badge {
@@ -311,27 +320,178 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
 ::-webkit-scrollbar { width:5px; height:5px; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15); border-radius:3px; }
+
+/* ═══════════════════════════════════════════════════════════
+   THEMES — data-theme on <html>
+═══════════════════════════════════════════════════════════ */
+[data-theme="cyber"] {
+  --bg:#050d1a;--panel-bg:rgba(8,21,43,0.95);--glass-bd:rgba(56,189,248,0.13);
+  --text:#d1eaff;--mu:#5a7fa0;--accent:#0ea5e9;--p:#38bdf8;
+  --success:#22d3ee;--warn:#f59e0b;--error:#f87171;
+}
+[data-theme="emerald"] {
+  --bg:#040f0a;--panel-bg:rgba(7,24,17,0.95);--glass-bd:rgba(52,211,153,0.12);
+  --text:#d1fae5;--mu:#4d8c6a;--accent:#10b981;--p:#34d399;
+  --success:#6ee7b7;--warn:#fcd34d;--error:#f87171;
+}
+[data-theme="rose"] {
+  --bg:#120810;--panel-bg:rgba(30,14,26,0.95);--glass-bd:rgba(251,113,133,0.12);
+  --text:#ffe4e8;--mu:#9a6272;--accent:#f43f5e;--p:#fb7185;
+  --success:#4ade80;--warn:#facc15;--error:#ff6b6b;
+}
+[data-theme="graphite"] {
+  --bg:#0a0a0a;--panel-bg:rgba(20,20,20,0.96);--glass-bd:rgba(255,255,255,0.10);
+  --text:#e2e2e2;--mu:#666;--accent:#888;--p:#aaa;
+  --success:#22c55e;--warn:#eab308;--error:#ef4444;
+}
+[data-theme="amber"] {
+  --bg:#120900;--panel-bg:rgba(25,15,0,0.96);--glass-bd:rgba(251,191,36,0.12);
+  --text:#fef3c7;--mu:#92672a;--accent:#d97706;--p:#fbbf24;
+  --success:#86efac;--warn:#fcd34d;--error:#f87171;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BACKGROUND PATTERNS — #ws-bg-layer overlay
+═══════════════════════════════════════════════════════════ */
+#ws-bg-layer {
+  position:fixed;inset:0;z-index:2;pointer-events:none;
+  transition:opacity .4s;
+}
+#ws-bg-layer.wsbg-dots {
+  background-image:radial-gradient(circle, rgba(139,92,246,0.22) 1px, transparent 1px);
+  background-size:28px 28px;
+}
+#ws-bg-layer.wsbg-grid {
+  background-image:
+    linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
+  background-size:40px 40px;
+}
+#ws-bg-layer.wsbg-circuit {
+  background-image:
+    linear-gradient(rgba(0,255,204,.06) 1px, transparent 1px),
+    linear-gradient(90deg,rgba(0,255,204,.06) 1px, transparent 1px),
+    radial-gradient(circle, rgba(0,255,204,.14) 1px, transparent 1px);
+  background-size:60px 60px, 60px 60px, 30px 30px;
+  background-position:0 0, 0 0, 15px 15px;
+}
+#ws-bg-layer.wsbg-nebula {
+  background:
+    radial-gradient(ellipse at 20% 30%, rgba(139,92,246,.13) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(59,130,246,.10) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 10%, rgba(16,185,129,.07) 0%, transparent 60%);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CURSOR LAYER & CG WORLD LAYER (static)
+═══════════════════════════════════════════════════════════ */
+#ws-cursor-layer {
+  position:fixed;inset:0;z-index:1800;pointer-events:none;overflow:hidden;
+}
+#cg-world-layer {
+  position:fixed;inset:0;z-index:1400;pointer-events:none;overflow:visible;
+}
+#cg-world-layer > * { pointer-events:all; }
+
+/* ═══════════════════════════════════════════════════════════
+   ACCOUNT PANEL (popup)
+═══════════════════════════════════════════════════════════ */
+#account-panel {
+  position:fixed;top:46px;right:10px;z-index:5500;
+  background:var(--panel-bg,rgba(15,20,36,0.98));border:1px solid var(--glass-bd,rgba(255,255,255,0.12));
+  border-radius:12px;padding:14px 16px;box-shadow:0 8px 28px rgba(0,0,0,.5);
+  min-width:220px;max-width:270px;display:none;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+#account-panel.visible { display:block; }
+.acc-user-row { display:flex;align-items:center;gap:10px;margin-bottom:10px; }
+.acc-av { width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff;flex-shrink:0; }
+.acc-name { font-weight:700;font-size:13px;color:var(--text,#e0e6ed); }
+.acc-id { font-size:10px;color:var(--mu,#7a8599);margin-top:1px; }
+.acc-sep { height:1px;background:var(--glass-bd,rgba(255,255,255,.08));margin:8px 0; }
+.acc-section-label { font-size:10px;color:var(--mu,#7a8599);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px; }
+.acc-theme-row { display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px; }
+.acc-theme-dot { width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:.15s;flex-shrink:0; }
+.acc-theme-dot:hover { transform:scale(1.25); }
+.acc-theme-dot.active { border-color:#fff; }
+.acc-bg-row { display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px; }
+.acc-bg-btn { background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--text,#e0e6ed);
+  padding:2px 7px;border-radius:6px;font-size:10px;cursor:pointer;transition:.15s; }
+.acc-bg-btn:hover { background:rgba(255,255,255,.13); }
+.acc-bg-btn.active { background:rgba(139,92,246,.25);border-color:#8b5cf6;color:#c4b5fd; }
+.acc-item { display:flex;align-items:center;gap:6px;padding:7px 8px;border-radius:7px;
+  font-size:12px;cursor:pointer;color:var(--text,#e0e6ed);transition:background .15s; }
+.acc-item:hover { background:rgba(255,255,255,.08); }
+.acc-item.danger { color:var(--error,#ef4444); }
+.acc-status { font-size:10px;color:var(--mu,#7a8599);padding:2px 0 6px;border-top:1px solid var(--glass-bd,rgba(255,255,255,.08));margin-top:4px; }
+
+/* ═══════════════════════════════════════════════════════════
+   LIVE DOT on Projects button
+═══════════════════════════════════════════════════════════ */
+#global-live-dot {
+  position:absolute;top:4px;right:4px;width:7px;height:7px;
+  background:var(--success,#22c55e);border-radius:50%;
+  border:1.5px solid rgba(15,20,36,.9);pointer-events:none;display:none;
+  animation:pulse-dot 2s infinite;
+}
+#global-live-dot.visible { display:block; }
+@keyframes pulse-dot {
+  0%,100% { box-shadow:0 0 0 0 rgba(34,197,94,.4); }
+  50%      { box-shadow:0 0 0 4px rgba(34,197,94,.1); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ONLINE USERS — avatar stack
+═══════════════════════════════════════════════════════════ */
+.ou-av {
+  width:24px;height:24px;border-radius:50%;background:var(--user-color,var(--p));
+  color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;
+  justify-content:center;border:2px solid rgba(15,20,36,.9);
+  margin-left:-5px;transition:transform .15s;cursor:default;position:relative;
+}
+.ou-av:first-child { margin-left:0; }
+.ou-av:hover { transform:translateY(-2px) scale(1.12); z-index:1; }
+
+/* ═══════════════════════════════════════════════════════════
+   NOTE textarea class
+═══════════════════════════════════════════════════════════ */
+.cg-textarea {
+  width:100%;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.12);
+  color:var(--text,#e0e6ed);padding:8px 10px;border-radius:7px;
+  font-size:12px;outline:none;resize:vertical;
+}
+.cg-textarea:focus { border-color:var(--accent,#5e6ad2); }
 </style>
 </head>
 <body>
 
+<!-- ═══════════════ BG LAYER (behind pixi canvas) ═══════════════ -->
+<div id="ws-bg-layer"></div>
+
 <!-- ═══════════════ CLOUD BAR ═══════════════ -->
 <div id="cloud-bar">
-  <div id="user-badge"></div>
+  <!-- User avatar button -->
+  <button id="cb-user-btn" onclick="showAccountPanel()" title="Аккаунт">
+    <div id="cb-user-av">?</div>
+    <span id="cb-user-name">Войти</span>
+  </button>
   <button class="cb-btn" onclick="newProjectDialog()" title="Создать новый проект" style="background:rgba(0,255,204,.12);border-color:rgba(0,255,204,.3);color:#00ffcc;padding:5px 10px;font-size:11px;font-weight:700;">🆕 Проект</button>
   <div class="cloud-bar-sep"></div>
-  <div id="context-bar">
-    <div id="ctx-local">—</div>
-    <div id="ctx-global"></div>
+  <div id="context-bar" style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:1px;min-width:0;">
+    <div id="cb-project-name" title="Текущий проект" style="font-size:11px;font-weight:700;color:var(--text,#e0e6ed);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">— черновик</div>
+    <div id="ctx-global" style="font-size:10px;color:var(--mu,#7a8599);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
   </div>
-  <div id="online-users"></div>
+  <div id="online-users" style="display:flex;gap:0;flex-shrink:0;"></div>
   <div class="cloud-bar-sep"></div>
   <button class="cb-btn" id="live-btn" onclick="toggleLiveSession()" title="Запустить/остановить Live">⚡ Live</button>
   <button class="cb-btn save" onclick="approveLocal()" title="Сохранить локально">💾 Локально</button>
-  <button class="cb-btn" id="copy-local-btn" onclick="copyHostLocally()" title="Скопировать локально">📋 Скопировать</button>
+  <button class="cb-btn" id="copy-local-btn" style="display:none;" onclick="copyHostLocally()" title="Скопировать локально">📋 Скопировать</button>
   <button class="cb-btn global-save" onclick="pushToCenter()" title="Сохранить в Supabase">📤 Глобально</button>
-  <button class="cb-btn" id="btn-cloud" onclick="showCloudModal()" title="Проекты и Live сессии" style="position:relative;">🗂 Проекты</button>
+  <button class="cb-btn" id="btn-cloud" onclick="showCloudModal()" title="Проекты и Live сессии">🗂 Проекты<span id="global-live-dot"></span></button>
 </div>
+
+<!-- ═══════════════ ACCOUNT PANEL ═══════════════ -->
+<div id="account-panel"></div>
 
 <!-- ═══════════════ TOOLBAR ═══════════════ -->
 <div id="toolbar" class="glass-panel" style="transition:transform .3s; cursor:grab;">
@@ -624,6 +784,12 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
     </div>
   </div>
 </div>
+
+<!-- ═══════════════ CG WORLD LAYER ═══════════════ -->
+<div id="cg-world-layer"></div>
+
+<!-- ═══════════════ CURSOR LAYER ═══════════════ -->
+<div id="ws-cursor-layer"></div>
 
 <!-- Toast -->
 <div id="ws-toast"></div>
