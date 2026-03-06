@@ -292,10 +292,11 @@ function _renderContextBar() {
 // ── SNAPSHOT HELPERS ───────────────────────────────────────────
 function _getSnap() {
   const wc=window.worldContainer;
-  return { state:window.getBubbleState(), camera:wc?{x:wc.x,y:wc.y,scale:wc.scale.x}:{x:0,y:0,scale:1} };
+  return { state:window.getBubbleState(), camera:wc?{x:wc.x,y:wc.y,scale:wc.scale.x}:{x:0,y:0,scale:1}, pb:SC.projectBase||null };
 }
 function _applySnap(snap) {
   if (!snap?.state) return;
+  if (snap.pb) SC.projectBase=snap.pb;
   // Remove all existing CG iframe panels before loading new state
   typeof window.destroyAllCGWorlds === 'function' && window.destroyAllCGWorlds();
   window.setBubbleState(snap.state);
@@ -538,11 +539,10 @@ async function startLiveSession() {
   SC.channel=SC.client.channel('live_ch_'+SC.user.id,{config:{broadcast:{self:false},presence:{key:SC.user.id}}});
   SC.channel.on('presence',{event:'sync'},()=>_renderOnlineUsers(SC.channel.presenceState()));
   SC.channel.on('broadcast',{event:'request_sync'},()=>SC.channel.send({type:'broadcast',event:'full_sync',payload:_getSnap()}));
-  const _pb=()=>SC.projectBase||'default';
-  SC.channel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_applySnap(payload);});
-  SC.channel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_applyCGUpdate(payload);});
-  SC.channel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_updateCursor(payload);});
-  SC.channel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
+  SC.channel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id)_applySnap(payload);});
+  SC.channel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id)_applyCGUpdate(payload);});
+  SC.channel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id)_updateCursor(payload);});
+  SC.channel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id)showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
   await SC.channel.subscribe(async s=>{if(s==='SUBSCRIBED')await SC.channel.track({id:SC.user.id,user:SC.user.name,name:SC.user.name,color:SC.user.color,av:SC.user.av,live:true});});
   SC.liveMode=true; _startLiveAuto(); _updateLiveUI('live',SC.user.name);
   wsToast('● LIVE активен','success');
@@ -563,11 +563,10 @@ window.watchLive = async function(targetId,readOnly) {
   SC.watchChannel=SC.client.channel('live_ch_'+targetId,{config:{broadcast:{self:false},presence:{key:SC.user.id}}});
   SC.watchChannel.on('presence',{event:'sync'},()=>_renderOnlineUsers(SC.watchChannel.presenceState()));
   SC.watchChannel.on('broadcast',{event:'full_sync'},({payload})=>_applySnap(payload));
-  const _wpb=()=>SC.projectBase||'default';
-  SC.watchChannel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_applySnap(payload);});
-  SC.watchChannel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_applyCGUpdate(payload);});
-  SC.watchChannel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_updateCursor(payload);});
-  SC.watchChannel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
+  SC.watchChannel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id)_applySnap(payload);});
+  SC.watchChannel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id)_applyCGUpdate(payload);});
+  SC.watchChannel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id)_updateCursor(payload);});
+  SC.watchChannel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id)showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
   await SC.watchChannel.subscribe(async s=>{if(s==='SUBSCRIBED'){await SC.watchChannel.track({id:SC.user.id,user:SC.user.name,name:SC.user.name,color:SC.user.color,av:SC.user.av,live:false});SC.watchChannel.send({type:'broadcast',event:'request_sync',payload:{}});}});
   SC.watchMode=true; SC.watchReadOnly=readOnly===true; SC.watchTarget=targetId;
   const u=TEAM_USERS.find(x=>x.id===targetId);

@@ -21,11 +21,13 @@ const CG_DEFS = [
   { idx:3, icon:'🔧', name:'Сборка',   color:'#10b981' },
   { idx:4, icon:'📤', name:'Экспорт',  color:'#f59e0b' },
   { idx:5, icon:'🖼', name:'Галерея',  color:'#ec4899' },
+  { idx:6, icon:'🎬', name:'Анимации', color:'#f97316' },
 ];
 
 // ── State ────────────────────────────────────────────────────────
 const _cgW = {
   worlds: {},   // bubbleId → { bubbleId, panels:[] }
+  groups: {},   // groupId → { id, bubbleId, panelIdxs[], activeIdx, tabEl, wx, wy, ww, wh }
   rafId:  null,
 };
 
@@ -77,12 +79,17 @@ window.createCGWorldForBubble = function(bubbleId) {
       `background:${tab.color}1a;border-bottom:1px solid ${tab.color}44;` +
       `display:flex;align-items:center;justify-content:space-between;` +
       `padding:0 14px;user-select:none;cursor:grab;`;
+    hdr.className = 'cgw-hdr';
     hdr.innerHTML =
       `<span style="font-size:13px;font-weight:700;color:${tab.color};">${tab.icon} ${tab.name}</span>` +
-      `<button class="cgw-close" ` +
-        `style="background:none;border:none;color:#7a8599;cursor:pointer;` +
+      `<div style="display:flex;gap:2px;align-items:center;">` +
+      `<button class="cgw-group-all" style="background:none;border:none;color:#7a8599;cursor:pointer;` +
+               `font-size:13px;line-height:1;padding:2px 5px;border-radius:4px;" ` +
+        `title="Объединить все вкладки / разгруппировать">⊞</button>` +
+      `<button class="cgw-close" style="background:none;border:none;color:#7a8599;cursor:pointer;` +
                `font-size:16px;line-height:1;padding:2px 6px;border-radius:4px;" ` +
-        `title="Закрыть вкладку">✕</button>`;
+        `title="Закрыть вкладку">✕</button>` +
+      `</div>`;
 
     // ── iframe ───────────────────────────────────────────────
     const iframe = document.createElement('iframe');
@@ -129,6 +136,12 @@ window.createCGWorldForBubble = function(bubbleId) {
       }
       _saveCGLayout();
       typeof queueRender === 'function' && queueRender();
+    });
+
+    // Group-all / dissolve toggle button
+    hdr.querySelector('.cgw-group-all').addEventListener('click', ev => {
+      ev.stopPropagation();
+      _cgGroupAll(bubbleId);
     });
 
     // Wheel on header/panel-border → forward to camera zoom
@@ -314,9 +327,14 @@ function _saveCGLayout() {
   if (!st.cgWindows) st.cgWindows = {};
   for (const bid in _cgW.worlds) {
     const inst = _cgW.worlds[bid];
+    const _grpsForBid = {};
+    Object.entries(_cgW.groups).filter(([,g])=>g.bubbleId===bid).forEach(([gid,g])=>{
+      _grpsForBid[gid]={id:g.id,panelIdxs:[...g.panelIdxs],activeIdx:g.activeIdx,wx:g.wx,wy:g.wy,ww:g.ww,wh:g.wh};
+    });
     st.cgWindows[bid] = {
       tabbed: !!inst.tabbed,
-      panels: inst.panels.map(p => ({ wx: p.wx, wy: p.wy, ww: p.ww, wh: p.wh })),
+      panels: inst.panels.map(p => ({ wx: p.wx, wy: p.wy, ww: p.ww, wh: p.wh, groupId: p.groupId||null })),
+      groups: _grpsForBid,
     };
   }
   // Broadcast state update so observers see new layout
@@ -344,6 +362,28 @@ window.restoreCGFromState = function() {
         panel.el.style.height = panel.wh + 'px';
       }
     });
+    // Restore groups
+    if (layout.groups) {
+      for (const gid in layout.groups) {
+        const gdata = layout.groups[gid]; if (!gdata?.panelIdxs?.length) continue;
+        const validIdxs = gdata.panelIdxs.filter(i => i < inst.panels.length);
+        if (validIdxs.length < 2) continue;
+        const group = { id: gid, bubbleId: bid, panelIdxs: validIdxs, activeIdx: gdata.activeIdx||0,
+          tabEl: null, wx: gdata.wx, wy: gdata.wy, ww: gdata.ww, wh: gdata.wh };
+        validIdxs.forEach((pIdx, i) => {
+          const p = inst.panels[pIdx]; if (!p) return;
+          p.groupId = gid; p.wx = group.wx; p.wy = group.wy; p.ww = group.ww; p.wh = group.wh;
+          if (p.el) {
+            p.el.style.width = p.ww+'px'; p.el.style.height = p.wh+'px';
+            p.el.style.display = i === group.activeIdx ? 'flex' : 'none';
+            const hdr = p.el.querySelector('.cgw-hdr'); if (hdr) hdr.style.display = 'none';
+          }
+        });
+        group.tabEl = _buildGroupTabBar(gid, bid);
+        _getLayer().appendChild(group.tabEl);
+        _cgW.groups[gid] = group;
+      }
+    }
   }
   if (Object.keys(_cgW.worlds).length > 0) { _startLoop(); _updatePositions(); }
 };
@@ -413,6 +453,13 @@ function _destroyCGWorld(bubbleId) {
     inst.panels.forEach(p => { if (p.miniId && st.minis) delete st.minis[p.miniId]; });
     if (st.cgWindows) delete st.cgWindows[bubbleId];
   }
+  // Clean up any groups for this bubble
+  Object.keys(_cgW.groups).forEach(gid => {
+    if (_cgW.groups[gid].bubbleId === bubbleId) {
+      _cgW.groups[gid].tabEl?.remove();
+      delete _cgW.groups[gid];
+    }
+  });
   delete _cgW.worlds[bubbleId];
   typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
   if (Object.keys(_cgW.worlds).length === 0) {
@@ -462,6 +509,13 @@ function _updatePositions() {
         mini.w = panel.ww;         mini.h = panel.wh;
       }
     });
+  }
+  // Update group tab bar positions
+  for (const gid in _cgW.groups) {
+    const group = _cgW.groups[gid];
+    if (!group.tabEl) continue;
+    group.tabEl.style.transform =
+      `translate(${group.wx * scale + camX}px,${(group.wy - CG_CFG.HEADER_H) * scale + camY}px) scale(${scale})`;
   }
 }
 
@@ -531,6 +585,187 @@ function _forwardWheelToCanvas(e) {
     clientX: e.clientX, clientY: e.clientY,
     ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey,
   }));
+}
+
+// ── CG Panel Grouping ────────────────────────────────────────────
+function _cgGroupAll(bubbleId) {
+  const world = _cgW.worlds[bubbleId];
+  if (!world || world.panels.length < 2) return;
+  const firstGid = world.panels[0].groupId;
+  if (firstGid && world.panels.every(p => p.groupId === firstGid)) {
+    _cgDissolveGroup(firstGid); return;
+  }
+  [...new Set(world.panels.map(p => p.groupId).filter(Boolean))].forEach(_cgDissolveGroup);
+  const gid = 'grp_' + Date.now();
+  const main = world.panels[0];
+  const group = { id: gid, bubbleId, panelIdxs: world.panels.map((_,i)=>i), activeIdx: 0,
+    tabEl: null, wx: main.wx, wy: main.wy, ww: main.ww, wh: main.wh };
+  world.panels.forEach((p, i) => {
+    p.groupId = gid; p.wx = group.wx; p.wy = group.wy; p.ww = group.ww; p.wh = group.wh;
+    if (p.el) {
+      p.el.style.width = p.ww+'px'; p.el.style.height = p.wh+'px';
+      p.el.style.display = i === 0 ? 'flex' : 'none';
+      const hdr = p.el.querySelector('.cgw-hdr'); if (hdr) hdr.style.display = 'none';
+    }
+  });
+  group.tabEl = _buildGroupTabBar(gid, bubbleId);
+  _getLayer().appendChild(group.tabEl);
+  _cgW.groups[gid] = group;
+  _saveCGLayout();
+  typeof wsToast === 'function' && wsToast('⊞ Все вкладки объединены', 'success');
+}
+
+function _cgDissolveGroup(gid) {
+  const group = _cgW.groups[gid]; if (!group) return;
+  const world = _cgW.worlds[group.bubbleId]; if (!world) return;
+  const bWX = group.wx, bWY = group.wy;
+  group.panelIdxs.forEach((pIdx, i) => {
+    const p = world.panels[pIdx]; if (!p) return;
+    p.groupId = null;
+    p.wx = bWX + i * (p.ww + CG_CFG.GAP); p.wy = bWY;
+    if (p.el) {
+      p.el.style.display = 'flex';
+      const hdr = p.el.querySelector('.cgw-hdr'); if (hdr) hdr.style.display = '';
+    }
+  });
+  group.tabEl?.remove();
+  delete _cgW.groups[gid];
+  _saveCGLayout();
+  typeof wsToast === 'function' && wsToast('⊡ Вкладки разгруппированы', 'info');
+}
+
+function _cgActivateGroupTab(gid, panelIdx) {
+  const group = _cgW.groups[gid]; if (!group) return;
+  const world = _cgW.worlds[group.bubbleId]; if (!world) return;
+  const localIdx = group.panelIdxs.indexOf(panelIdx);
+  if (localIdx < 0) return;
+  group.activeIdx = localIdx;
+  group.panelIdxs.forEach((pIdx, i) => {
+    const p = world.panels[pIdx];
+    if (p?.el) p.el.style.display = i === localIdx ? 'flex' : 'none';
+  });
+  if (group.tabEl) {
+    group.tabEl.querySelectorAll('.cgw-gtab').forEach((tab, i) => {
+      const p = world.panels[group.panelIdxs[i]];
+      const act = i === localIdx;
+      tab.classList.toggle('active', act);
+      tab.style.color = act ? (p?.tab?.color||'#fff') : '#7a8599';
+      tab.style.background = act ? (p?.tab?.color||'#fff')+'22' : 'transparent';
+      tab.style.border = `1px solid ${act?(p?.tab?.color||'#fff')+'55':'transparent'}`;
+    });
+  }
+}
+
+function _cgDetachFromGroup(gid, panelIdx) {
+  const group = _cgW.groups[gid]; if (!group) return;
+  const world = _cgW.worlds[group.bubbleId]; if (!world) return;
+  const p = world.panels[panelIdx]; if (!p) return;
+  const localIdx = group.panelIdxs.indexOf(panelIdx);
+  group.panelIdxs.splice(localIdx, 1);
+  p.groupId = null;
+  p.wx = group.wx + (group.ww + CG_CFG.GAP); p.wy = group.wy;
+  if (p.el) {
+    p.el.style.display = 'flex';
+    const hdr = p.el.querySelector('.cgw-hdr'); if (hdr) hdr.style.display = '';
+  }
+  if (group.panelIdxs.length <= 1) {
+    if (group.panelIdxs.length === 1) {
+      const rem = world.panels[group.panelIdxs[0]];
+      if (rem) {
+        rem.groupId = null; rem.wx = group.wx; rem.wy = group.wy;
+        if (rem.el) {
+          rem.el.style.display = 'flex';
+          const hdr = rem.el.querySelector('.cgw-hdr'); if (hdr) hdr.style.display = '';
+        }
+      }
+    }
+    group.tabEl?.remove(); delete _cgW.groups[gid];
+  } else {
+    if (group.activeIdx >= group.panelIdxs.length) group.activeIdx = group.panelIdxs.length - 1;
+    group.panelIdxs.forEach((pIdx, i) => {
+      const pp = world.panels[pIdx];
+      if (pp?.el) pp.el.style.display = i === group.activeIdx ? 'flex' : 'none';
+    });
+    group.tabEl?.remove();
+    group.tabEl = _buildGroupTabBar(gid, group.bubbleId);
+    _getLayer().appendChild(group.tabEl);
+  }
+  _saveCGLayout();
+}
+
+function _buildGroupTabBar(gid, bubbleId) {
+  const group = _cgW.groups[gid]; if (!group) return document.createElement('div');
+  const world = _cgW.worlds[bubbleId]; if (!world) return document.createElement('div');
+  const bar = document.createElement('div');
+  bar.dataset.cgGroupTab = gid;
+  bar.style.cssText =
+    `position:absolute;left:0;top:0;transform-origin:0 0;` +
+    `display:flex;align-items:center;gap:2px;min-height:${CG_CFG.HEADER_H}px;width:${group.ww}px;` +
+    `background:#0d1020;border:2px solid rgba(255,255,255,.10);` +
+    `border-bottom:none;border-radius:12px 12px 0 0;` +
+    `padding:4px 6px;pointer-events:auto;z-index:205;` +
+    `box-shadow:0 -4px 16px rgba(0,0,0,.6);`;
+  const drag = document.createElement('span');
+  drag.style.cssText = `color:#4a5568;font-size:14px;cursor:grab;padding:0 5px 0 2px;flex-shrink:0;user-select:none;`;
+  drag.textContent = '⠿';
+  bar.appendChild(drag);
+  group.panelIdxs.forEach((pIdx, i) => {
+    const p = world.panels[pIdx]; if (!p) return;
+    const act = i === group.activeIdx;
+    const tab = document.createElement('div');
+    tab.className = 'cgw-gtab' + (act ? ' active' : '');
+    tab.style.cssText =
+      `display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;` +
+      `cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;user-select:none;` +
+      `color:${act?p.tab.color:'#7a8599'};background:${act?p.tab.color+'22':'transparent'};` +
+      `border:1px solid ${act?p.tab.color+'55':'transparent'};transition:all .15s;`;
+    tab.innerHTML = `${p.tab.icon} ${p.tab.name}`;
+    const pop = document.createElement('span');
+    pop.title = 'Отделить в отдельное окно';
+    pop.style.cssText = `margin-left:3px;opacity:.5;cursor:pointer;font-size:10px;flex-shrink:0;`;
+    pop.textContent = '⊡';
+    pop.addEventListener('click', e => { e.stopPropagation(); _cgDetachFromGroup(gid, pIdx); });
+    tab.appendChild(pop);
+    tab.addEventListener('click', () => _cgActivateGroupTab(gid, pIdx));
+    bar.appendChild(tab);
+  });
+  const spacer = document.createElement('span'); spacer.style.flex = '1';
+  bar.appendChild(spacer);
+  const dissolveBtn = document.createElement('span');
+  dissolveBtn.title = 'Разгруппировать (отдельные окна)';
+  dissolveBtn.style.cssText = `color:#4a5568;font-size:13px;cursor:pointer;padding:2px 5px;border-radius:4px;flex-shrink:0;`;
+  dissolveBtn.textContent = '⊞';
+  dissolveBtn.addEventListener('click', () => _cgDissolveGroup(gid));
+  bar.appendChild(dissolveBtn);
+  _makeGroupDraggable(drag, group, bubbleId);
+  return bar;
+}
+
+function _makeGroupDraggable(handle, group, bubbleId) {
+  const world = _cgW.worlds[bubbleId]; if (!world) return;
+  let dragging = false, sx, sy, wx0, wy0;
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return; e.stopPropagation();
+    dragging = true; sx = e.clientX; sy = e.clientY; wx0 = group.wx; wy0 = group.wy;
+    handle.style.cursor = 'grabbing'; handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const wc = window.worldContainer; if (!wc) return;
+    const sc = wc.scale.x;
+    group.wx = wx0 + (e.clientX - sx) / sc;
+    group.wy = wy0 + (e.clientY - sy) / sc;
+    group.panelIdxs.forEach(pIdx => {
+      const p = world.panels[pIdx]; if (p) { p.wx = group.wx; p.wy = group.wy; }
+    });
+  });
+  const end = e => {
+    if (!dragging) return; dragging = false;
+    handle.style.cursor = 'grab'; handle.releasePointerCapture(e.pointerId);
+    _expandBubbleForCG(bubbleId); _saveCGLayout();
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
 }
 
 // ── Legacy stubs (kept for any lingering references) ─────────────
