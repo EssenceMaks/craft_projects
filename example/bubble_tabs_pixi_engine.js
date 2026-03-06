@@ -442,6 +442,7 @@ if (btnMasterCreate) {
             linkingMode = !linkingMode; linkingSourcePointId = null;
             if (linkingMode) btnMasterCreate.classList.add('active'); else btnMasterCreate.classList.remove('active');
             let t = document.getElementById('link-tools'); if (t) t.style.display = linkingMode ? 'flex' : 'none';
+            window._cgSetLinking && window._cgSetLinking(linkingMode);
         }
     };
     const ddToggle = document.getElementById('btn-master-dd');
@@ -578,7 +579,7 @@ document.addEventListener('keydown', e => {
     if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
     if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'Z')) { e.preventDefault(); redo(); }
     if (e.key === 'Escape') {
-        if (linkingMode) { linkingMode = false; linkingSourcePointId = null; let b = document.getElementById('btn-link'); if (b) b.classList.remove('active'); let t = document.getElementById('link-tools'); if (t) t.style.display = 'none'; queueRender(); }
+        if (linkingMode) { linkingMode = false; linkingSourcePointId = null; let b = document.getElementById('btn-link'); if (b) b.classList.remove('active'); let t = document.getElementById('link-tools'); if (t) t.style.display = 'none'; window._cgSetLinking && window._cgSetLinking(false); queueRender(); }
         if (lineCreationMode) stopLineCreationMode();
     }
 });
@@ -606,7 +607,7 @@ function resolveCollisions(mid, vis = new Set()) { let mv = state.bubbles[mid]; 
 
 const _bW = b => b.width  || b.size;
 const _bH = b => b.height || b.size;
-function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; let bw=_bW(b),bh=_bH(b); return { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; } if (state.minis[id]) { let m = state.minis[id], bx = 0, by = 0; if (m.parentId && state.bubbles[m.parentId]) { bx = state.bubbles[m.parentId].x; by = state.bubbles[m.parentId].y; } return { x: bx + m.x, y: by + m.y, rect: { width: m.width || 60, height: m.height || 30 } }; } return null; }
+function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; let bw=_bW(b),bh=_bH(b); return { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; } if (state.minis[id]) { let m = state.minis[id], bx = 0, by = 0; if (m.parentId && state.bubbles[m.parentId]) { bx = state.bubbles[m.parentId].x; by = state.bubbles[m.parentId].y; } if (m.cgMini) { let mw=m.w||100, mh=m.h||100; return { x: bx + m.x + mw/2, y: by + m.y + mh/2, rect: { width: mw, height: mh } }; } return { x: bx + m.x, y: by + m.y, rect: { width: m.width || 60, height: m.height || 30 } }; } return null; }
 
 function getEI(bid, c, tx, ty) { if (!c || !c.rect) return { x: 0, y: 0 }; let dx = tx - c.x, dy = ty - c.y; let isC = state.bubbles[bid] && state.bubbles[bid].shape === 'circle'; if (isC) { let r = c.rect.width / 2, d = Math.hypot(dx, dy); return d === 0 ? { x: c.x, y: c.y } : { x: c.x + (dx / d) * r, y: c.y + (dy / d) * r }; } let w2 = c.rect.width / 2, h2 = c.rect.height / 2, sx = dx ? Math.abs(w2 / dx) : Infinity, sy = dy ? Math.abs(h2 / dy) : Infinity, s = Math.min(sx, sy); return s > 1 ? { x: c.x, y: c.y } : { x: c.x + dx * s, y: c.y + dy * s }; }
 
@@ -756,6 +757,7 @@ function startLineCreationMode() {
     linkingSourcePointId = null;
     if (btnMasterCreate) btnMasterCreate.classList.add('active');
     let t = document.getElementById('link-tools'); if (t) t.style.display = 'none'; // Hide link tools
+    window._cgSetLinking && window._cgSetLinking(true);
     queueRender();
     selectEntity(null, null); // Deselect any entity
 }
@@ -764,6 +766,7 @@ function stopLineCreationMode() {
     lineCreationMode = false;
     currentLineId = null;
     if (btnMasterCreate) btnMasterCreate.classList.remove('active');
+    window._cgSetLinking && window._cgSetLinking(false);
     queueRender();
     saveState();
 }
@@ -1032,8 +1035,16 @@ function renderBubbles() {
             c.on('pointerdown', e => {
                 if (ctxMenu) ctxMenu.style.display = 'none';
                 e.stopPropagation();
-                if (linkingMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLinking(pId); return; }
-                if (lineCreationMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLineSeqClick(pId); return; }
+                if (linkingMode || lineCreationMode) {
+                    let pId = 'p_' + generateId(), bd2 = state.bubbles[d.id];
+                    let mp2 = getMapPt(e);
+                    let cx2 = bd2 ? bd2.x + _bW(bd2)/2 : 0, cy2 = bd2 ? bd2.y + _bH(bd2)/2 : 0;
+                    let dist2 = Math.hypot(mp2.x - cx2, mp2.y - cy2);
+                    let halfR = Math.max(_bW(bd2)||1, _bH(bd2)||1) * 0.5;
+                    let ang2 = dist2 > halfR * 0.3 ? Math.atan2(mp2.y - cy2, mp2.x - cx2) : null;
+                    state.points[pId] = { attachedTo: d.id, angle: ang2 };
+                    if (linkingMode) handleLinking(pId); else handleLineSeqClick(pId); return;
+                }
                 if (e.button !== 0) return; // only left-click triggers resize/drag
                 let bd = state.bubbles[d.id]; if (!bd) return;
                 if (cache._resDir) { _bubStartResize(e, bd, cache, c); return; }
@@ -1133,8 +1144,13 @@ function renderMinis() {
             c.addChild(bg, txt, gear); layerBub.addChild(c); cache = { c, bg, txt, gear }; pxM[d.id] = cache;
             c.on('pointerdown', e => {
                 e.stopPropagation(); if (ctxMenu) ctxMenu.style.display = 'none';
-                if (linkingMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLinking(pId); return; }
-                if (lineCreationMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLineSeqClick(pId); return; }
+                if (linkingMode || lineCreationMode) {
+                    let pId = 'p_' + generateId();
+                    let mp2 = getMapPt(e), bc2 = getBC(d.id);
+                    let ang2 = bc2 ? Math.atan2(mp2.y - bc2.y, mp2.x - bc2.x) : null;
+                    state.points[pId] = { attachedTo: d.id, angle: ang2 };
+                    if (linkingMode) handleLinking(pId); else handleLineSeqClick(pId); return;
+                }
                 selectEntity('mini', d.id);
                 // CG world is opened via right-click context menu (createCGWindows)
                 let pos = getBC(d.id); if (!pos) return; let mpStart = getMapPt(e); let offX = mpStart.x - pos.x, offY = mpStart.y - pos.y; c.cursor = 'grabbing';

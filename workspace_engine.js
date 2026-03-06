@@ -193,6 +193,8 @@ function _getSnap() {
 }
 function _applySnap(snap) {
   if (!snap?.state) return;
+  // Remove all existing CG iframe panels before loading new state
+  typeof window.destroyAllCGWorlds === 'function' && window.destroyAllCGWorlds();
   window.setBubbleState(snap.state);
   if (snap.camera&&window.worldContainer) { window.worldContainer.x=snap.camera.x; window.worldContainer.y=snap.camera.y; window.worldContainer.scale.set(snap.camera.scale); }
   window.clearBubblePartSys && window.clearBubblePartSys();
@@ -325,7 +327,7 @@ window.closeCloudModal = function() {
   clearInterval(SC.modalRefreshTimer);
 };
 window.switchCloudTab = function(tab) {
-  ['central','live','local'].forEach(t=>{ document.getElementById('ctab-'+t)?.classList.toggle('on',t===tab); const p=document.getElementById('ctab-'+t+'-panel');if(p)p.style.display=t===tab?'':'none'; });
+  ['central','local'].forEach(t=>{ document.getElementById('ctab-'+t)?.classList.toggle('on',t===tab); const p=document.getElementById('ctab-'+t+'-panel');if(p)p.style.display=t===tab?'':'none'; });
 };
 window.refreshCloudModal = async function() {
   const fmt = ts => new Date(ts).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
@@ -472,9 +474,21 @@ window.watchLive = async function(targetId,readOnly) {
 async function _stopWatching(){if(SC.watchChannel){await SC.watchChannel.unsubscribe();SC.watchChannel=null;}SC.watchMode=false;SC.watchReadOnly=false;SC.watchTarget=null;_clearCursors();_updateLiveUI('off','');}
 function _updateLiveUI(mode,label){
   const btn=document.getElementById('live-btn'),cb=document.getElementById('copy-local-btn');
-  if(mode==='live'){if(btn){btn.textContent='● LIVE';btn.className='cb-btn live';}if(cb)cb.style.display='none';}
-  else if(mode==='watch'){if(btn){btn.textContent=label;btn.className='cb-btn watch';}if(cb)cb.style.display='';btn&&(btn.onclick=async()=>{await _stopWatching();btn.onclick=()=>toggleLiveSession();});}
-  else{if(btn){btn.textContent='⚡ Live';btn.className='cb-btn';btn.onclick=()=>toggleLiveSession();}if(cb)cb.style.display='none';}
+  const mtb=document.getElementById('cloud-live-toggle-btn');
+  if(mode==='live'){
+    if(btn){btn.textContent='● LIVE';btn.className='cb-btn live';}
+    if(cb)cb.style.display='none';
+    if(mtb){mtb.textContent='■ Стоп Live';mtb.style.background='#ef4444';mtb.onclick=()=>toggleLiveSession();}
+  } else if(mode==='watch'){
+    if(btn){btn.textContent=label;btn.className='cb-btn watch';}
+    if(cb)cb.style.display='';
+    btn&&(btn.onclick=async()=>{await _stopWatching();btn.onclick=()=>toggleLiveSession();});
+    if(mtb){mtb.textContent='✕ Отключиться';mtb.style.background='#f59e0b';mtb.onclick=async()=>{await _stopWatching();if(mtb)mtb.onclick=()=>toggleLiveSession();};}
+  } else {
+    if(btn){btn.textContent='⚡ Live';btn.className='cb-btn';btn.onclick=()=>toggleLiveSession();}
+    if(cb)cb.style.display='none';
+    if(mtb){mtb.textContent='⚡ Live';mtb.style.background='';mtb.onclick=()=>toggleLiveSession();}
+  }
   renderUserBadge();
 }
 function _startLiveAuto(){SC.liveAutoTimer=setInterval(async()=>{if(!SC.liveMode||!SC.client||!SC.user)return;SC.client.from('projects').update({data:_getSnap(),updated_at:new Date().toISOString()}).eq('id','live_'+SC.user.id);},30000);}
@@ -576,13 +590,46 @@ window.wsToast = function(msg,type='info'){
   clearTimeout(t._t);t._t=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateY(12px)';},3500);
 };
 
-// ── CG WORLD (delegates to workspace_cg.js) ───────────────────
-window.createCGWindows = function(bubbleId) {
-  if (typeof window.createCGWorldForBubble === 'function') {
-    window.createCGWorldForBubble(bubbleId);
-  }
-};
-
-// Stubs kept to avoid errors from any old HTML onclick references
+// createCGWindows is defined in workspace_cg.js (shows mode-choice dialog).
+// Stubs to prevent errors from any old HTML onclick references:
 window.openCGPanel  = function() {};
 window.closeCGPanel = function() {};
+
+// ── NEW PROJECT DIALOG ─────────────────────────────────────────
+window.newProjectDialog = function() {
+  document.getElementById('new-project-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'new-project-modal';
+  m.style.cssText =
+    'position:fixed;inset:0;z-index:9500;background:rgba(0,0,0,.6);' +
+    'display:flex;align-items:center;justify-content:center;';
+  m.innerHTML = `
+    <div style="background:#1a1d2e;border:1px solid rgba(0,255,204,.3);border-radius:14px;
+                padding:24px 28px;min-width:340px;color:#e0e6ed;font-family:Segoe UI,sans-serif;
+                box-shadow:0 20px 60px rgba(0,0,0,.7);">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px;">🆕 Новый проект</div>
+      <input id="new-proj-name" type="text" class="ws-inp" placeholder="Название проекта (напр. my_project)"
+             style="width:100%;margin-bottom:14px;" autofocus>
+      <div style="display:flex;gap:10px;">
+        <button class="ws-btn ws-btn-g" onclick="window._confirmNewProject()" style="flex:1;">✅ Создать</button>
+        <button class="ws-btn ws-btn-s" onclick="document.getElementById('new-project-modal')?.remove()" style="flex:1;">Отмена</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+  setTimeout(() => document.getElementById('new-proj-name')?.focus(), 50);
+};
+window._confirmNewProject = function() {
+  const name = (document.getElementById('new-proj-name')?.value||'').trim().replace(/\s+/g,'_');
+  if (!name) { wsToast('Введите название','warn'); return; }
+  document.getElementById('new-project-modal')?.remove();
+  // Destroy CG panels, clear state, set new project base
+  typeof window.destroyAllCGWorlds === 'function' && window.destroyAllCGWorlds();
+  const blank = { bubbles:{}, minis:{}, links:{}, points:{}, cgData:{}, cgWindows:{} };
+  window.setBubbleState && window.setBubbleState(blank);
+  window.clearBubblePartSys && window.clearBubblePartSys();
+  window.fullRebuild && window.fullRebuild();
+  SC.projectBase = name; SC.currentInstanceId = null; SC.workingMode = null;
+  document.getElementById('cloud-project-name') && (document.getElementById('cloud-project-name').value = name);
+  _renderContextBar(); wsToast('🆕 Проект: ' + name, 'success');
+};

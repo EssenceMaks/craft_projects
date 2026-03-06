@@ -58,6 +58,7 @@ window.createCGWorldForBubble = function(bubbleId) {
 
     // ── Panel element ────────────────────────────────────────
     const panelEl = document.createElement('div');
+    panelEl.setAttribute('data-cg-panel', '1');
     panelEl.style.cssText =
       `position:absolute;left:0;top:0;` +
       `width:${panel.ww}px;height:${panel.wh}px;` +
@@ -196,6 +197,7 @@ function _createCGTabbed(bubbleId) {
     ww: totalW, wh: CG_CFG.MINI_H, el: null, bubbleId,
   };
   const panelEl = document.createElement('div');
+  panelEl.setAttribute('data-cg-panel', '1');
   panelEl.style.cssText =
     `position:absolute;left:0;top:0;width:${panel.ww}px;height:${panel.wh}px;` +
     `transform-origin:0 0;display:flex;flex-direction:column;` +
@@ -424,12 +426,18 @@ function _getLayer() {
     el = document.createElement('div');
     el.id = 'cg-world-layer';
     el.style.cssText =
-      'position:fixed;top:0;left:0;width:0;height:0;' +
-      'pointer-events:none;z-index:50;overflow:visible;';
+      'position:fixed;inset:0;pointer-events:none;z-index:1400;overflow:visible;';
     document.body.appendChild(el);
   }
   return el;
 }
+
+// Called by bubble engine to pass clicks through panels during line-creation / linking
+window._cgSetLinking = function(active) {
+  document.querySelectorAll('[data-cg-panel]').forEach(p => {
+    p.style.pointerEvents = active ? 'none' : 'auto';
+  });
+};
 
 function _startLoop() {
   if (_cgW.rafId) return;

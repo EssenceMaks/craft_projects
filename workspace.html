@@ -318,6 +318,7 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
 <!-- ═══════════════ CLOUD BAR ═══════════════ -->
 <div id="cloud-bar">
   <div id="user-badge"></div>
+  <button class="cb-btn" onclick="newProjectDialog()" title="Создать новый проект" style="background:rgba(0,255,204,.12);border-color:rgba(0,255,204,.3);color:#00ffcc;padding:5px 10px;font-size:11px;font-weight:700;">🆕 Проект</button>
   <div class="cloud-bar-sep"></div>
   <div id="context-bar">
     <div id="ctx-local">—</div>
@@ -579,9 +580,16 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
       <h3 style="margin:0;">☁ Облако &amp; Live</h3>
       <button onclick="closeCloudModal()" style="background:none;border:none;color:#7a8599;font-size:20px;cursor:pointer;">×</button>
     </div>
+    <!-- Live bar — always visible above tabs -->
+    <div id="cloud-live-bar" style="margin-bottom:12px;padding:8px 10px;background:rgba(0,255,204,.04);border:1px solid rgba(0,255,204,.15);border-radius:9px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+        <span style="font-size:11px;font-weight:700;color:#00ffcc;">📡 Live сессии</span>
+        <button class="ws-btn ws-btn-p" id="cloud-live-toggle-btn" onclick="toggleLiveSession()" style="font-size:10px;padding:3px 10px;">⚡ Live</button>
+      </div>
+      <div id="cloud-live-list"><div style="color:#7a8599;font-size:11px;">Загрузка...</div></div>
+    </div>
     <div class="cloud-tab-bar">
       <div class="cloud-tab on" id="ctab-central" onclick="switchCloudTab('central')">🌐 Центральные</div>
-      <div class="cloud-tab" id="ctab-live" onclick="switchCloudTab('live')">📡 Live</div>
       <div class="cloud-tab" id="ctab-local" onclick="switchCloudTab('local')">💾 Локальные</div>
     </div>
     <div id="ctab-central-panel">
@@ -591,13 +599,7 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
       </div>
       <div id="cloud-central-list"><div style="color:#7a8599;font-size:12px;padding:10px;">Загрузка...</div></div>
     </div>
-    <div id="ctab-live-panel" style="display:none;">
-      <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;">
-        <button class="ws-btn ws-btn-p" onclick="toggleLiveSession()" id="cloud-live-toggle-btn">⚡ Запустить Live</button>
-        <span style="font-size:11px;color:#7a8599;">Ваша Live-сессия доступна другим</span>
-      </div>
-      <div id="cloud-live-list"><div style="color:#7a8599;font-size:12px;padding:10px;">Загрузка...</div></div>
-    </div>
+    <!-- Live panel removed — live bar is always visible above tabs -->
     <div id="ctab-local-panel" style="display:none;">
       <div style="display:flex;gap:8px;margin-bottom:10px;">
         <input id="local-save-name" type="text" class="ws-inp" placeholder="Название локального сохранения" style="flex:1;">
