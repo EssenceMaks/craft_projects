@@ -459,6 +459,24 @@ function getV(css,prop){const m=(css||'').match(new RegExp(prop+'\\s*:\\s*([^;]+
 function escQ(s){return(s||'').replace(/"/g,'&quot;');}
 function uid(){return Math.random().toString(36).substr(2,6);}
 
+// ── Embed mode (//?embed=1 hides cloud bar; &tab=X also hides nav) ──
+(function(){
+  const p = new URLSearchParams(location.search);
+  if (p.get('embed') === '1') {
+    const cb = document.getElementById('cloud-bar');
+    if (cb) cb.innerHTML = '<span style="font-size:10px;color:#6b7280;padding:0 8px;">🔒 live sync via Supabase</span>';
+    const tabId = p.get('tab');
+    if (tabId) {
+      // Single-tab embed: hide full nav bar, show only this tab
+      const nb = document.getElementById('nb');
+      if (nb) nb.style.display = 'none';
+      document.addEventListener('DOMContentLoaded', () => {}, { once: true });
+      // Defer switchTab until after switchTab is defined
+      window._embedTab = tabId;
+    }
+  }
+})();
+
 // Navigation
 window.switchTab=function(id){
   S.activeTab=id;
@@ -472,6 +490,7 @@ window.switchTab=function(id){
   if(id==='5')renderGal();
 };
 document.querySelectorAll('.tb').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+if (window._embedTab) switchTab(window._embedTab);
 
 // ─── TAB 1: UI KIT ───────────────────────────────────────────
 window.switchUiTab=function(sub){

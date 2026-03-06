@@ -235,6 +235,10 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
   padding:8px 10px; border:1px solid rgba(255,255,255,0.08); border-radius:7px;
   margin-bottom:5px; background:rgba(255,255,255,0.03);
 }
+/* Git-tree details/summary — suppress default triangle, use flex */
+#ctab-local-panel details > summary { list-style:none; }
+#ctab-local-panel details > summary::-webkit-details-marker { display:none; }
+#ctab-local-panel details > summary::marker { display:none; }
 
 /* ═══════════════════════════════════════════════════════════
    NOTE OVERLAY (e+Enter)
@@ -443,6 +447,14 @@ input[type=color] { background:none; border:none; width:100%; height:30px; curso
     </div>
   </div>
   <div class="form-group" id="prop-name-group"><label>Название</label><input type="text" id="prop-name"></div>
+  <div id="mini-bubble-props" style="display:none;">
+    <div class="form-group"><label>Форма мини</label>
+      <select id="mini-shape"><option value="pill">Пилюля</option><option value="rect">Прямоугольник</option><option value="oval">Овал</option></select>
+    </div>
+    <div class="form-group row"><label>Радиус</label><input type="number" id="mini-border-radius" min="0" max="200" step="2" style="flex:1;"></div>
+    <div class="form-group row" style="margin-top:4px;"><label>Ширина</label><input type="number" id="mini-width" min="40" max="4000" step="10" style="flex:1;"></div>
+    <div class="form-group row" style="margin-top:4px;"><label>Высота</label><input type="number" id="mini-height" min="20" max="4000" step="10" style="flex:1;"></div>
+  </div>
   <div id="main-bubble-props">
     <div class="form-group"><label>Форма</label><select id="prop-shape"><option value="circle">Круг</option><option value="square">Квадрат</option></select></div>
     <div class="form-group" id="prop-size-group"><label>Размер</label><input type="number" id="prop-size" min="50" max="2000" step="10"></div>

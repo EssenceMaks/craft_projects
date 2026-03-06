@@ -45,7 +45,7 @@ window.initWorkspace = function() {
     if (!ch) return;
     if (SC.cursorThrottle) return;
     SC.cursorThrottle = setTimeout(()=>{ SC.cursorThrottle=null; }, 50);
-    ch.send({type:'broadcast',event:'cursor',payload:{uid:SC.user.id,name:SC.user.name,color:SC.user.color,av:SC.user.av,x:SC.lastCursorX,y:SC.lastCursorY}});
+    ch.send({type:'broadcast',event:'cursor',payload:{uid:SC.user.id,name:SC.user.name,color:SC.user.color,av:SC.user.av,x:SC.lastCursorX,y:SC.lastCursorY,pb:SC.projectBase||'default'}});
   });
 
   // E+Enter note system
@@ -55,10 +55,12 @@ window.initWorkspace = function() {
     const el = document.getElementById('note-word-count'); if (el) el.textContent = w+' слов';
   });
 
-  // Local autosave every 30s
+  // Draft autosave every 30s (quick recovery)
   setInterval(() => {
     try { localStorage.setItem('ws_draft', JSON.stringify({snapshot:_getSnap(), projectBase:SC.projectBase, ts:Date.now()})); } catch(e){}
   }, 30000);
+  // Versioned autosave every 5 min
+  setInterval(_autoSave, 300000);
 
   buildLoginModal();
   _restoreSession();
@@ -211,24 +213,66 @@ function _restoreDraft() {
   } catch(e){}
 }
 
-// ── SAVE / LOAD ────────────────────────────────────────────────
+// ── VERSIONED SAVE SYSTEM ─────────────────────────────────────
+function _autoSave() {
+  if (!SC.user) return;
+  const key='ws_autosave_'+SC.user.id;
+  try {
+    const arr=JSON.parse(localStorage.getItem(key)||'[]');
+    arr.unshift({ts:Date.now(),pb:SC.projectBase||'default',instanceId:SC.currentInstanceId||null,snap:_getSnap()});
+    localStorage.setItem(key, JSON.stringify(arr.slice(0,20)));
+  } catch(e){}
+}
+function _getAutoSaves() {
+  if (!SC.user) return [];
+  try { return JSON.parse(localStorage.getItem('ws_autosave_'+SC.user.id)||'[]'); } catch(e){ return []; }
+}
+function _getApproved() {
+  if (!SC.user) return [];
+  const key = 'ws_approved_'+SC.user.id;
+  try {
+    let arr = JSON.parse(localStorage.getItem(key)||'[]');
+    // One-time migration from legacy ws_local_saves
+    const legacyKey = 'ws_local_saves';
+    const legacy = JSON.parse(localStorage.getItem(legacyKey)||'[]');
+    if (legacy.length && !localStorage.getItem('ws_legacy_migrated_'+SC.user.id)) {
+      const migrated = legacy.map(s => ({id:'appr_legacy_'+s.id, name:s.name, ts:s.ts||Date.now(), pb:SC.projectBase||'default', instanceId:null, snap:{state:s.state, camera:s.camera||{x:0,y:0,scale:1}}, autosaves:[]}));
+      arr = [...arr, ...migrated];
+      localStorage.setItem(key, JSON.stringify(arr.slice(0,30)));
+      localStorage.setItem('ws_legacy_migrated_'+SC.user.id, '1');
+    }
+    return arr;
+  } catch(e){ return []; }
+}
 window.approveLocal = function() {
+  if (!SC.user) { showLoginModal(); return; }
   const nameEl=document.getElementById('local-save-name');
-  const name=(nameEl?.value||'').trim()||(SC.projectBase||'workspace')+'_'+new Date().toISOString().slice(0,10);
-  const saves=JSON.parse(localStorage.getItem('ws_local_saves')||'[]');
-  const id=name.replace(/\s+/g,'_');
-  const idx=saves.findIndex(s=>s.id===id);
-  const entry={id,name,ts:Date.now(),..._getSnap()};
-  if (idx>=0) saves[idx]=entry; else saves.unshift(entry);
-  localStorage.setItem('ws_local_saves',JSON.stringify(saves.slice(0,20)));
+  const pb=SC.projectBase||'default';
+  const autoName=pb+'_апруд_'+new Date().toLocaleString('ru',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).replace(',','');
+  const name=(nameEl?.value||'').trim()||autoName;
+  const auto=_getAutoSaves().filter(a=>a.pb===pb).slice(0,5);
+  const appr=_getApproved();
+  const entry={id:'appr_'+Date.now(),name,ts:Date.now(),pb,instanceId:SC.currentInstanceId||null,snap:_getSnap(),autosaves:auto};
+  appr.unshift(entry);
+  localStorage.setItem('ws_approved_'+SC.user.id, JSON.stringify(appr.slice(0,30)));
   SC.currentLocalSave=name; SC.workingMode='local';
-  wsToast('💾 Сохранено локально: '+name,'success'); _renderContextBar();
+  if (nameEl) nameEl.value='';
+  wsToast('✅ Апруд: '+name,'success'); _renderContextBar(); refreshCloudModal();
 };
 window.loadLocalSave = function(id) {
-  const saves=JSON.parse(localStorage.getItem('ws_local_saves')||'[]');
-  const s=saves.find(x=>x.id===id); if (!s) return;
-  _applySnap(s); SC.currentLocalSave=s.name; SC.workingMode='local';
+  const appr=_getApproved(); const s=appr.find(x=>x.id===id); if (!s?.snap) return;
+  _applySnap(s.snap); SC.currentLocalSave=s.name; SC.workingMode='local';
   wsToast('💾 Загружено: '+s.name,'success'); _renderContextBar(); closeCloudModal();
+};
+window.loadAutoSave = function(idx) {
+  const arr=_getAutoSaves(); const s=arr[idx]; if (!s?.snap) return;
+  _applySnap(s.snap); SC.workingMode='local';
+  wsToast('🔄 Автосейв загружен ('+new Date(s.ts).toLocaleTimeString('ru')+')','info'); closeCloudModal();
+};
+window.deleteApproved = function(id) {
+  if (!SC.user||!confirm('Удалить?')) return;
+  const appr=_getApproved().filter(x=>x.id!==id);
+  localStorage.setItem('ws_approved_'+SC.user.id, JSON.stringify(appr)); refreshCloudModal();
 };
 window.pushToCenter = async function(customName) {
   if (!SC.client) { wsToast('Supabase не настроен','warn'); return; }
@@ -259,13 +303,14 @@ window.deleteInstance = async function(id) {
 };
 window.copyHostLocally = async function() {
   if (!SC.watchTarget||!SC.client){wsToast('Сначала начните наблюдение','warn');return;}
+  if (!SC.user){showLoginModal();return;}
   const {data}=await SC.client.from('projects').select('data').eq('id','live_'+SC.watchTarget).single();
   if (!data?.data){wsToast('Нет данных','error');return;}
   const u=TEAM_USERS.find(x=>x.id===SC.watchTarget);
-  const name=(SC.projectBase||'workspace')+'_копия_'+(u?.name||SC.watchTarget);
-  const saves=JSON.parse(localStorage.getItem('ws_local_saves')||'[]');
-  saves.unshift({id:name.replace(/\s+/g,'_'),name,ts:Date.now(),...data.data});
-  localStorage.setItem('ws_local_saves',JSON.stringify(saves.slice(0,20)));
+  const name=(SC.projectBase||'default')+'_копия_'+(u?.name||SC.watchTarget);
+  const appr=_getApproved();
+  appr.unshift({id:'appr_'+Date.now(),name,ts:Date.now(),pb:SC.projectBase||'default',instanceId:null,snap:data.data,autosaves:[]});
+  localStorage.setItem('ws_approved_'+SC.user.id, JSON.stringify(appr.slice(0,30)));
   wsToast('📋 Скопировано: '+name,'success');
 };
 
@@ -283,20 +328,98 @@ window.switchCloudTab = function(tab) {
   ['central','live','local'].forEach(t=>{ document.getElementById('ctab-'+t)?.classList.toggle('on',t===tab); const p=document.getElementById('ctab-'+t+'-panel');if(p)p.style.display=t===tab?'':'none'; });
 };
 window.refreshCloudModal = async function() {
-  // Central
-  if (!SC.client) { document.getElementById('cloud-central-list').innerHTML='<div style="color:#7a8599;font-size:12px;padding:10px;">Supabase не подключён</div>'; }
+  const fmt = ts => new Date(ts).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+
+  // ── Live users bar ──────────────────────────────────────────
+  let liveBarH = '';
+  if (SC.client) {
+    const {data:lr}=await SC.client.from('projects').select('id,owner,version_label').eq('live',true).ilike('id','live_%');
+    (lr||[]).forEach(p=>{
+      const uid=p.id.replace('live_',''), u=TEAM_USERS.find(x=>x.id===uid), isSelf=SC.user?.id===uid;
+      const col=u?.color||'#555', nm=u?.name||uid, av=u?.av||nm[0]||'?', vl=p.version_label||'—';
+      liveBarH+=`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border:1.5px solid ${col}44;border-radius:8px;margin-bottom:6px;background:${col}11;">
+        <span style="background:${col};color:#fff;padding:2px 9px;border-radius:10px;font-size:10px;font-weight:700;">● ${av}</span>
+        <span style="flex:1;font-size:12px;font-weight:700;">${nm}</span>
+        <span style="font-size:10px;color:#7a8599;">📁 ${vl}</span>
+        ${isSelf?'<span style="font-size:10px;color:#7a8599;font-style:italic;">это вы</span>':`<button class="ws-btn ws-btn-s" style="font-size:10px;padding:2px 7px;" onclick="watchLive('${uid}',true);closeCloudModal();">👁</button><button class="ws-btn ws-btn-p" style="font-size:10px;padding:2px 7px;" onclick="watchLive('${uid}',false);closeCloudModal();">✏️</button>`}
+      </div>`;
+    });
+  }
+  const lb = document.getElementById('cloud-live-list');
+  if (lb) lb.innerHTML = liveBarH || '<div style="color:#7a8599;font-size:12px;padding:9px;">Нет Live сессий</div>';
+
+  // ── Central tab: git-tree of Supabase instances ─────────────
+  const cc = document.getElementById('cloud-central-list');
+  if (!SC.client) { if(cc) cc.innerHTML='<div style="color:#7a8599;font-size:12px;padding:10px;">Supabase не подключён</div>'; }
   else {
     const {data:projs}=await SC.client.from('projects').select('id,owner,updated_at').not('id','ilike','live_%').order('id',{ascending:false});
     const grp={}; (projs||[]).forEach(p=>{const m=p.id.match(/^(.+)_экземпляр_(\d+)$/);const b=m?m[1]:'other';if(!grp[b])grp[b]=[];grp[b].push({...p,num:m?parseInt(m[2]):0});});
-    let h=''; Object.entries(grp).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([base,items])=>{h+=`<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:700;color:#8b5cf6;padding:3px 0;border-bottom:1px solid rgba(139,92,246,.2);margin-bottom:5px;">📁 ${base}</div>`;items.sort((a,b)=>b.num-a.num).forEach(p=>{h+=`<div class="cloud-inst-row"><div style="flex:1;min-width:0;"><span style="font-weight:700;font-size:12px;">Экз. ${p.num}</span> <span style="font-size:10px;color:#7a8599;">${p.owner||''} · ${p.updated_at?.slice(0,16)||''}</span></div><div style="display:flex;gap:4px;"><button class="ws-btn ws-btn-s" style="font-size:10px;padding:3px 8px;" onclick="loadInstance('${p.id}')">⬇ Взять</button><button class="ws-btn ws-btn-rl" style="font-size:10px;padding:3px 7px;" onclick="deleteInstance('${p.id}')">✕</button></div></div>`;});h+='</div>';});
-    document.getElementById('cloud-central-list').innerHTML=h||'<div style="color:#7a8599;font-size:12px;padding:10px;">Нет экземпляров</div>';
+    let h=''; Object.entries(grp).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([base,items])=>{
+      const isCur=base===SC.projectBase;
+      h+=`<div style="margin-bottom:14px;">
+        <div style="font-size:11px;font-weight:800;color:${isCur?'#00ffcc':'#8b5cf6'};padding:4px 0;border-bottom:1px solid ${isCur?'rgba(0,255,204,.3)':'rgba(139,92,246,.2)'};margin-bottom:6px;">
+          📁 ${base}${isCur?' ← текущий':''}
+        </div>`;
+      items.sort((a,b)=>b.num-a.num).forEach(p=>{
+        const isCurInst=p.id===SC.currentInstanceId;
+        h+=`<div class="cloud-inst-row" style="${isCurInst?'border-left:3px solid #00ffcc;padding-left:8px;':'' }">
+          <div style="flex:1;min-width:0;">
+            <span style="font-weight:700;font-size:12px;">Экз.&nbsp;${p.num}</span>
+            <span style="font-size:9px;color:#7a8599;margin-left:5px;">${p.owner||''} · ${p.updated_at?.slice(0,16)||''}</span>
+            ${isCurInst?'<span style="font-size:9px;color:#00ffcc;margin-left:4px;">▶ активный</span>':''}
+          </div>
+          <div style="display:flex;gap:4px;">
+            <button class="ws-btn ws-btn-s" style="font-size:10px;padding:3px 7px;" onclick="loadInstance('${p.id}')">⬇</button>
+            <button class="ws-btn ws-btn-rl" style="font-size:10px;padding:3px 6px;" onclick="deleteInstance('${p.id}')">✕</button>
+          </div>
+        </div>`;
+      });
+      h+='</div>';
+    });
+    if(cc) cc.innerHTML=h||'<div style="color:#7a8599;font-size:12px;padding:10px;">Нет экземпляров</div>';
   }
-  // Live
-  let lH=''; if (SC.client){const {data:lr}=await SC.client.from('projects').select('id,owner,updated_at,version_label').eq('live',true).ilike('id','live_%');(lr||[]).forEach(p=>{const uid=p.id.replace('live_','');const u=TEAM_USERS.find(x=>x.id===uid);const isSelf=SC.user?.id===uid;lH+=`<div style="padding:8px;border:2px solid ${u?.color||'#555'};border-radius:7px;margin-bottom:7px;background:rgba(255,255,255,.02);"><div style="display:flex;justify-content:space-between;align-items:center;"><div><span style="background:${u?.color||'#555'};color:#fff;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:700;">● ${u?.av||'?'}</span> <span style="font-weight:700;">${u?.name||uid}</span></div>${isSelf?'<span style="font-size:10px;color:#7a8599;font-style:italic;">это вы</span>':`<div style="display:flex;gap:4px;"><button class="ws-btn ws-btn-s" style="font-size:10px;padding:2px 8px;" onclick="watchLive('${uid}',true);closeCloudModal();">👁</button><button class="ws-btn ws-btn-p" style="font-size:10px;padding:2px 8px;" onclick="watchLive('${uid}',false);closeCloudModal();">✏️</button></div>`}</div></div>`; });}
-  document.getElementById('cloud-live-list').innerHTML=lH||'<div style="color:#7a8599;font-size:12px;padding:9px;">Нет Live сессий</div>';
-  // Local
-  const saves=JSON.parse(localStorage.getItem('ws_local_saves')||'[]');
-  document.getElementById('cloud-local-list').innerHTML=saves.map(s=>`<div class="cloud-inst-row"><div><span style="font-weight:700;font-size:11px;">${s.name}</span> <span style="font-size:9px;color:#7a8599;">${new Date(s.ts).toLocaleString('ru')}</span></div><div style="display:flex;gap:4px;"><button class="ws-btn ws-btn-s" style="font-size:10px;padding:2px 7px;" onclick="loadLocalSave('${s.id}')">↩</button></div></div>`).join('')||'<div style="color:#7a8599;font-size:12px;padding:9px;">Нет локальных сохранений</div>';
+
+  // ── Local tab: git-tree of approved saves + auto-saves ───────
+  const cl = document.getElementById('cloud-local-list');
+  if (cl) {
+    const appr=_getApproved(), auto=_getAutoSaves();
+    const pb=SC.projectBase||'default';
+    let h='';
+    if (appr.length===0) {
+      // Show only auto-saves if no approved
+      const pbAuto=auto.filter(a=>a.pb===pb);
+      if (pbAuto.length) {
+        h+='<div style="font-size:10px;color:#7a8599;margin-bottom:6px;">Нет апрудов — последние автосейвы ('+pb+'):</div>';
+        pbAuto.slice(0,5).forEach((a,i)=>{
+          h+=`<div class="cloud-inst-row" style="padding-left:18px;">
+            <div style="flex:1;font-size:10px;color:#7a8599;">🔄 автосейв <span style="font-weight:700;">${fmt(a.ts)}</span></div>
+            <button class="ws-btn ws-btn-s" style="font-size:9px;padding:2px 5px;" onclick="loadAutoSave(${auto.indexOf(a)})">↩</button>
+          </div>`;
+        });
+      } else { h='<div style="color:#7a8599;font-size:12px;padding:9px;">Нет сохранений (нажмите 💾 Апруд)</div>'; }
+    } else {
+      appr.forEach(a=>{
+        const isCur=a.id===SC.currentLocalSave||a.name===SC.currentLocalSave;
+        const autos=(a.autosaves||[]);
+        h+=`<details style="margin-bottom:7px;" ${isCur?'open':''}>
+          <summary style="cursor:pointer;padding:6px 8px;background:rgba(0,255,204,.07);border:1px solid rgba(0,255,204,.2);border-radius:7px;display:flex;align-items:center;gap:7px;list-style:none;">
+            <span style="color:#00ffcc;font-size:12px;">✅</span>
+            <span style="flex:1;font-size:11px;font-weight:700;">${a.name}</span>
+            <span style="font-size:9px;color:#7a8599;">${fmt(a.ts)} · 📁${a.pb||'—'}</span>
+            <button class="ws-btn ws-btn-s" style="font-size:9px;padding:1px 6px;" onclick="event.preventDefault();loadLocalSave('${a.id}')">↩</button>
+            <button class="ws-btn ws-btn-rl" style="font-size:9px;padding:1px 5px;" onclick="event.preventDefault();deleteApproved('${a.id}')">✕</button>
+          </summary>
+          <div style="border-left:2px solid rgba(0,255,204,.15);margin-left:14px;padding-left:8px;margin-top:3px;">
+          ${autos.length?autos.map((as,i)=>`<div class="cloud-inst-row" style="padding:3px 0;">
+            <div style="flex:1;font-size:9px;color:#7a8599;">🔄 автосейв ${fmt(as.ts)}</div>
+            <button class="ws-btn ws-btn-s" style="font-size:9px;padding:1px 4px;" onclick="loadAutoSave(${auto.indexOf(as)>=0?auto.indexOf(as):i})">↩</button>
+          </div>`).join(''):'<div style="font-size:9px;color:#7a8599;padding:3px 0;">нет вложенных автосейвов</div>'}
+          </div>
+        </details>`;
+      });
+    }
+    cl.innerHTML=h;
+  }
 };
 
 // ── LIVE SESSIONS ──────────────────────────────────────────────
@@ -310,10 +433,11 @@ async function startLiveSession() {
   SC.channel=SC.client.channel('live_ch_'+SC.user.id,{config:{broadcast:{self:false},presence:{key:SC.user.id}}});
   SC.channel.on('presence',{event:'sync'},()=>_renderOnlineUsers(SC.channel.presenceState()));
   SC.channel.on('broadcast',{event:'request_sync'},()=>SC.channel.send({type:'broadcast',event:'full_sync',payload:_getSnap()}));
-  SC.channel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id)_applySnap(payload);});
-  SC.channel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id)_applyCGUpdate(payload);});
-  SC.channel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id)_updateCursor(payload);});
-  SC.channel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id)showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
+  const _pb=()=>SC.projectBase||'default';
+  SC.channel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_applySnap(payload);});
+  SC.channel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_applyCGUpdate(payload);});
+  SC.channel.on('broadcast',{event:'cursor'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))_updateCursor(payload);});
+  SC.channel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_pb()))showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
   await SC.channel.subscribe(async s=>{if(s==='SUBSCRIBED')await SC.channel.track({user:SC.user.name,color:SC.user.color,av:SC.user.av});});
   SC.liveMode=true; _startLiveAuto(); _updateLiveUI('live',SC.user.name);
   wsToast('● LIVE активен','success');
@@ -334,10 +458,11 @@ window.watchLive = async function(targetId,readOnly) {
   SC.watchChannel=SC.client.channel('live_ch_'+targetId,{config:{broadcast:{self:false},presence:{key:SC.user.id}}});
   SC.watchChannel.on('presence',{event:'sync'},()=>_renderOnlineUsers(SC.watchChannel.presenceState()));
   SC.watchChannel.on('broadcast',{event:'full_sync'},({payload})=>_applySnap(payload));
-  SC.watchChannel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id)_applySnap(payload);});
-  SC.watchChannel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id)_applyCGUpdate(payload);});
-  SC.watchChannel.on('broadcast',{event:'cursor'},({payload})=>_updateCursor(payload));
-  SC.watchChannel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id)showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
+  const _wpb=()=>SC.projectBase||'default';
+  SC.watchChannel.on('broadcast',{event:'canvas_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_applySnap(payload);});
+  SC.watchChannel.on('broadcast',{event:'cg_update'},({payload})=>{if(payload.from!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))_applyCGUpdate(payload);});
+  SC.watchChannel.on('broadcast',{event:'cursor'},({payload})=>{if(!payload.pb||payload.pb===_wpb())_updateCursor(payload);});
+  SC.watchChannel.on('broadcast',{event:'note_update'},({payload})=>{if(payload.uid!==SC.user?.id&&(!payload.pb||payload.pb===_wpb()))showNoteOnCanvas(payload.uid,payload.name,payload.color,payload.av,payload.x,payload.y,payload.text);});
   await SC.watchChannel.subscribe(async s=>{if(s==='SUBSCRIBED'){await SC.watchChannel.track({user:SC.user.name,color:SC.user.color,av:SC.user.av});SC.watchChannel.send({type:'broadcast',event:'request_sync',payload:{}});}});
   SC.watchMode=true; SC.watchReadOnly=readOnly===true; SC.watchTarget=targetId;
   const u=TEAM_USERS.find(x=>x.id===targetId);
@@ -359,7 +484,7 @@ window.broadcastCanvasUpdate = function() {
   const ch=SC.liveMode?SC.channel:(SC.watchMode&&!SC.watchReadOnly?SC.watchChannel:null);
   if (!ch||!SC.user)return;
   clearTimeout(SC.broadcastTimer);
-  SC.broadcastTimer=setTimeout(()=>ch.send({type:'broadcast',event:'canvas_update',payload:{..._getSnap(),from:SC.user.id}}),150);
+  SC.broadcastTimer=setTimeout(()=>ch.send({type:'broadcast',event:'canvas_update',payload:{..._getSnap(),from:SC.user.id,pb:SC.projectBase||'default'}}),150);
 };
 window.broadcastCGUpdate = function(bubbleId) {
   const ch=SC.liveMode?SC.channel:(SC.watchMode&&!SC.watchReadOnly?SC.watchChannel:null);

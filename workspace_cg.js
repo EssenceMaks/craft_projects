@@ -41,14 +41,12 @@ window.createCGWorldForBubble = function(bubbleId) {
   const layer = _getLayer();
   const inst  = { bubbleId, panels: [] };
 
-  const totalW = CG_DEFS.length * (CG_CFG.MINI_W + CG_CFG.GAP) - CG_CFG.GAP;
-  const _bw = b.width  || b.size;
-  const _bh = b.height || b.size;
-  const baseWX = b.x + _bw / 2 - totalW / 2;
-  const baseWY = b.y + _bh + CG_CFG.OFFSET_Y;
+  const PAD = CG_CFG.GAP;
+  const baseWX = b.x + PAD;
+  const baseWY = b.y + PAD;
 
   CG_DEFS.forEach((tab, i) => {
-    // Per-panel world-space state
+    // Per-panel world-space state — panels are INSIDE the parent bubble
     const panel = {
       wx: baseWX + i * (CG_CFG.MINI_W + CG_CFG.GAP),
       wy: baseWY,
@@ -116,14 +114,20 @@ window.createCGWorldForBubble = function(bubbleId) {
     hdr.querySelector('.cgw-close').addEventListener('click', ev => {
       ev.stopPropagation();
       panelEl.remove();
+      // Remove associated mini-bubble entry
+      const st2 = window.getBubbleState();
+      if (st2?.minis && panel.miniId) delete st2.minis[panel.miniId];
       const pi = inst.panels.indexOf(panel);
       if (pi >= 0) inst.panels.splice(pi, 1);
       if (inst.panels.length === 0) {
+        if (st2?.cgWindows) delete st2.cgWindows[bubbleId];
         delete _cgW.worlds[bubbleId];
         if (Object.keys(_cgW.worlds).length === 0) {
           cancelAnimationFrame(_cgW.rafId); _cgW.rafId = null;
         }
       }
+      _saveCGLayout();
+      typeof queueRender === 'function' && queueRender();
     });
 
     // Wheel on header/panel-border → forward to camera zoom
@@ -137,12 +141,16 @@ window.createCGWorldForBubble = function(bubbleId) {
   });
 
   _cgW.worlds[bubbleId] = inst;
+
+  // Create mini-bubble entries and expand parent bubble
+  _createCGMinis(inst, st);
+  _expandBubbleForCG(bubbleId);
+
   _startLoop();
   _updatePositions();
-
   _saveCGLayout();
   typeof wsToast === 'function' &&
-    wsToast('🧩 CG мир открыт — тяни за заголовок, масштаб ◢ уголком', 'success');
+    wsToast('🧩 CG открыт — панели внутри бабла', 'success');
 };
 
 // ── Mode-choice dialog ──────────────────────────────────────────
@@ -180,12 +188,11 @@ function _createCGTabbed(bubbleId) {
   _destroyCGWorld(bubbleId);
   const layer = _getLayer();
   const inst = { bubbleId, panels: [], tabbed: true };
+  const PAD = CG_CFG.GAP;
   const totalW = CG_DEFS.length * (CG_CFG.MINI_W + CG_CFG.GAP) - CG_CFG.GAP;
-  const _bwT = b.width  || b.size;
-  const _bhT = b.height || b.size;
   const panel = {
-    wx: b.x + _bwT / 2 - totalW / 2,
-    wy: b.y + _bhT + CG_CFG.OFFSET_Y,
+    wx: b.x + PAD,
+    wy: b.y + PAD,
     ww: totalW, wh: CG_CFG.MINI_H, el: null, bubbleId,
   };
   const panelEl = document.createElement('div');
@@ -251,6 +258,8 @@ function _createCGTabbed(bubbleId) {
   }, { passive: false });
   inst.panels.push(panel);
   _cgW.worlds[bubbleId] = inst;
+  _createCGMinis(inst, st);
+  _expandBubbleForCG(bubbleId);
   _startLoop(); _updatePositions();
   _saveCGLayout();
   typeof wsToast === 'function' && wsToast('🧩 CG вкладочный режим открыт', 'success');
@@ -352,14 +361,57 @@ window.getCGWorldBounds = function() {
 window.destroyCGWorld      = function(bid) { _destroyCGWorld(bid); };
 window.destroyAllCGWorlds  = function() { Object.keys(_cgW.worlds).forEach(_destroyCGWorld); };
 
+// ── Create mini-bubble entries for CG panels ──────────────────────
+function _createCGMinis(inst, st) {
+  if (!st) return;
+  if (!st.minis) st.minis = {};
+  const pb = st.bubbles?.[inst.bubbleId]; if (!pb) return;
+  inst.panels.forEach((panel, i) => {
+    const tab = panel.tab || { idx: i+1, icon: '🧩', name: 'CG ' + (i+1), color: '#8b5cf6' };
+    const miniId = 'cg_' + inst.bubbleId + '_' + (tab.idx || i);
+    st.minis[miniId] = {
+      id: miniId, name: tab.icon + ' ' + tab.name,
+      parentId: inst.bubbleId,
+      x: panel.wx - pb.x, y: panel.wy - pb.y,
+      w: panel.ww, h: panel.wh,
+      bgColor: (tab.color || '#8b5cf6') + '1a',
+      borderColor: tab.color || '#8b5cf6',
+      glowColor: tab.color || '#8b5cf6',
+      cgMini: true,
+    };
+    panel.miniId = miniId;
+  });
+}
+
+// ── Expand parent bubble to contain all CG panels ─────────────────
+function _expandBubbleForCG(bubbleId) {
+  const st = window.getBubbleState(); if (!st) return;
+  const b = st.bubbles?.[bubbleId]; if (!b) return;
+  const inst = _cgW.worlds[bubbleId]; if (!inst?.panels?.length) return;
+  const PAD = CG_CFG.GAP * 2;
+  let maxX = 0, maxY = 0;
+  inst.panels.forEach(p => {
+    maxX = Math.max(maxX, (p.wx - b.x) + p.ww);
+    maxY = Math.max(maxY, (p.wy - b.y) + p.wh);
+  });
+  b.shape = 'square';
+  b.width  = maxX + PAD;
+  b.height = maxY + PAD;
+  typeof window.queueRender === 'function' && window.queueRender();
+  typeof window.saveState   === 'function' && window.saveState();
+}
+
 // ── Internal ─────────────────────────────────────────────────────
 function _destroyCGWorld(bubbleId) {
   const inst = _cgW.worlds[bubbleId]; if (!inst) return;
   inst.panels.forEach(p => p.el?.remove());
-  delete _cgW.worlds[bubbleId];
-  // Remove from state so observers don't re-open it
+  // Remove associated mini-bubble entries
   const st = window.getBubbleState();
-  if (st?.cgWindows) { delete st.cgWindows[bubbleId]; }
+  if (st) {
+    inst.panels.forEach(p => { if (p.miniId && st.minis) delete st.minis[p.miniId]; });
+    if (st.cgWindows) delete st.cgWindows[bubbleId];
+  }
+  delete _cgW.worlds[bubbleId];
   typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
   if (Object.keys(_cgW.worlds).length === 0) {
     cancelAnimationFrame(_cgW.rafId); _cgW.rafId = null;
@@ -388,11 +440,19 @@ function _startLoop() {
 function _updatePositions() {
   const wc = window.worldContainer; if (!wc) return;
   const scale = wc.scale.x, camX = wc.x, camY = wc.y;
+  const st = window.getBubbleState();
   for (const bid in _cgW.worlds) {
     _cgW.worlds[bid].panels.forEach(panel => {
       if (!panel.el) return;
       panel.el.style.transform =
         `translate(${panel.wx * scale + camX}px,${panel.wy * scale + camY}px) scale(${scale})`;
+      // Sync mini-bubble world position
+      if (panel.miniId && st?.minis?.[panel.miniId] && st.bubbles?.[panel.bubbleId]) {
+        const pb = st.bubbles[panel.bubbleId];
+        const mini = st.minis[panel.miniId];
+        mini.x = panel.wx - pb.x;  mini.y = panel.wy - pb.y;
+        mini.w = panel.ww;         mini.h = panel.wh;
+      }
     });
   }
 }
@@ -422,6 +482,7 @@ function _makeDraggable(hdr, panel) {
     if (!dragging) return;
     dragging = false; hdr.style.cursor = 'grab';
     hdr.releasePointerCapture(e.pointerId);
+    _expandBubbleForCG(panel.bubbleId);
     _saveCGLayout();
   };
   hdr.addEventListener('pointerup',     endDrag);
@@ -445,6 +506,7 @@ function _makeResizable(resizer, panel, panelEl) {
     const onUp = () => {
       resizer.removeEventListener('pointermove', onMove);
       resizer.removeEventListener('pointerup',   onUp);
+      _expandBubbleForCG(panel.bubbleId);
       _saveCGLayout();
     };
     resizer.addEventListener('pointermove', onMove);

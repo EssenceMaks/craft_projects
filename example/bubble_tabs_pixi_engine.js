@@ -1034,6 +1034,7 @@ function renderBubbles() {
                 e.stopPropagation();
                 if (linkingMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLinking(pId); return; }
                 if (lineCreationMode) { let pId = 'p_' + generateId(); state.points[pId] = { attachedTo: d.id, angle: null }; handleLineSeqClick(pId); return; }
+                if (e.button !== 0) return; // only left-click triggers resize/drag
                 let bd = state.bubbles[d.id]; if (!bd) return;
                 if (cache._resDir) { _bubStartResize(e, bd, cache, c); return; }
                 selectEntity('main', d.id);
@@ -1081,7 +1082,10 @@ function renderBubbles() {
                 let bdel = document.createElement('div'); bdel.className = 'ctx-btn danger'; bdel.innerText = '❌ Удалить бабл';
                 bdel.onclick = ev => {
                     ev.stopPropagation(); ctxMenu.style.display = 'none';
-                    let mb = document.getElementById('btn-del-entity'); if (mb) { selectEntity('main', d.id); mb.click(); }
+                    delete state.bubbles[d.id];
+                    for (let m in state.minis) if (state.minis[m]?.parentId === d.id) delete state.minis[m];
+                    for (let p in state.points) if (state.points[p]?.attachedTo === d.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX||0; state.points[p].y = state.points[p]._renderedY||0; }
+                    selectEntity(null, null); queueRender(); saveState();
                 };
                 ctxMenu.appendChild(bdel);
 
@@ -1154,21 +1158,64 @@ function renderMinis() {
                 let bdel = document.createElement('div'); bdel.className = 'ctx-btn danger'; bdel.innerText = '❌ Удалить мини-бабл';
                 bdel.onclick = ev => {
                     ev.stopPropagation(); ctxMenu.style.display = 'none';
-                    let mb = document.getElementById('btn-del-entity'); if (mb) { selectEntity('mini', d.id); mb.click(); }
+                    delete state.minis[d.id];
+                    for (let p in state.points) if (state.points[p]?.attachedTo === d.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX||0; state.points[p].y = state.points[p]._renderedY||0; }
+                    selectEntity(null, null); queueRender(); saveState();
                 };
                 ctxMenu.appendChild(bdel);
 
                 ctxMenu.style.left = e.global.x + 15 + 'px'; ctxMenu.style.top = e.global.y + 15 + 'px'; ctxMenu.style.display = 'flex';
             });
         }
-        cache.txt.text = d.name || ''; let tw = cache.txt.width + 24, th = cache.txt.height + 16;
-        cache.bg.clear(); cache.bg.beginFill(cHex(d.bgColor), cAlpha(d.bgColor)); cache.bg.drawRoundedRect(-tw / 2, -th / 2, tw, th, 20); cache.bg.endFill();
-        cache.bg.lineStyle(1, cHex(d.borderColor), 1); cache.bg.drawRoundedRect(-tw / 2, -th / 2, tw, th, 20);
-        // Glow
-        cache.bg.beginFill(cHex(d.glowColor), 0.1); cache.bg.drawRoundedRect(-tw / 2 - 5, -th / 2 - 5, tw + 10, th + 10, 25); cache.bg.endFill();
-        if (selectedEntity && selectedEntity.id === d.id && selectedEntity.type === 'mini') { cache.bg.lineStyle(2, 0xffffff, 0.7); cache.bg.drawRoundedRect(-tw / 2 - 3, -th / 2 - 3, tw + 6, th + 6, 23); }
-        cache.gear.position.set(0, -th / 2 - 12);
-        let px = d.x, py = d.y; if (d.parentId && state.bubbles[d.parentId]) { px += state.bubbles[d.parentId].x; py += state.bubbles[d.parentId].y; } cache.c.position.set(px, py);
+        let px = d.x, py = d.y;
+        if (d.parentId && state.bubbles[d.parentId]) { px += state.bubbles[d.parentId].x; py += state.bubbles[d.parentId].y; }
+        if (d.cgMini && d.w && d.h) {
+            // ── Large CG mini: origin = top-left, draws a rect frame ──────────
+            const dw = d.w, dh = d.h, rad = d.borderRadius || 12;
+            cache.txt.text = '';
+            cache.bg.clear();
+            cache.bg.beginFill(cHex(d.glowColor || d.bgColor), 0.04);
+            cache.bg.drawRoundedRect(-8, -8, dw + 16, dh + 16, rad + 8); cache.bg.endFill();
+            cache.bg.beginFill(cHex(d.bgColor), 0.06);
+            cache.bg.drawRoundedRect(0, 0, dw, dh, rad); cache.bg.endFill();
+            cache.bg.lineStyle(2, cHex(d.borderColor), 0.7);
+            cache.bg.drawRoundedRect(0, 0, dw, dh, rad);
+            if (selectedEntity?.id === d.id && selectedEntity.type === 'mini') {
+                cache.bg.lineStyle(2, 0xffffff, 0.55);
+                cache.bg.drawRoundedRect(-4, -4, dw + 8, dh + 8, rad + 4);
+            }
+            cache.gear.position.set(dw - 16, 20);
+        } else if (d.shape === 'rect' || d.shape === 'oval') {
+            // ── Explicit-sized rect / oval mini ──────────────────────────────
+            cache.txt.text = d.name || '';
+            const tw = d.w || (cache.txt.width + 48), th = d.h || (cache.txt.height + 32);
+            const rad = d.shape === 'oval' ? Math.min(tw, th) / 2 : (d.borderRadius != null ? d.borderRadius : 20);
+            cache.bg.clear();
+            cache.bg.beginFill(cHex(d.glowColor), 0.08); cache.bg.drawRoundedRect(-tw/2-6, -th/2-6, tw+12, th+12, rad+6); cache.bg.endFill();
+            cache.bg.beginFill(cHex(d.bgColor), cAlpha(d.bgColor));
+            if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw/2, th/2);
+            else cache.bg.drawRoundedRect(-tw/2, -th/2, tw, th, rad);
+            cache.bg.endFill();
+            cache.bg.lineStyle(1.5, cHex(d.borderColor), 1);
+            if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw/2, th/2);
+            else cache.bg.drawRoundedRect(-tw/2, -th/2, tw, th, rad);
+            if (selectedEntity?.id === d.id && selectedEntity.type === 'mini') {
+                cache.bg.lineStyle(2, 0xffffff, 0.7);
+                if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw/2+4, th/2+4);
+                else cache.bg.drawRoundedRect(-tw/2-4, -th/2-4, tw+8, th+8, rad+4);
+            }
+            cache.txt.position.set(0, 0);
+            cache.gear.position.set(tw/2 - 4, -th/2 + 4);
+        } else {
+            // ── Standard text-pill mini ───────────────────────────────────────
+            cache.txt.text = d.name || ''; let tw = cache.txt.width + 24, th = cache.txt.height + 16;
+            cache.bg.clear(); cache.bg.beginFill(cHex(d.bgColor), cAlpha(d.bgColor)); cache.bg.drawRoundedRect(-tw / 2, -th / 2, tw, th, 20); cache.bg.endFill();
+            cache.bg.lineStyle(1, cHex(d.borderColor), 1); cache.bg.drawRoundedRect(-tw / 2, -th / 2, tw, th, 20);
+            cache.bg.beginFill(cHex(d.glowColor), 0.1); cache.bg.drawRoundedRect(-tw / 2 - 5, -th / 2 - 5, tw + 10, th + 10, 25); cache.bg.endFill();
+            if (selectedEntity && selectedEntity.id === d.id && selectedEntity.type === 'mini') { cache.bg.lineStyle(2, 0xffffff, 0.7); cache.bg.drawRoundedRect(-tw / 2 - 3, -th / 2 - 3, tw + 6, th + 6, 23); }
+            cache.gear.position.set(0, -th / 2 - 12);
+        }
+        cache.c.position.set(px, py);
     });
 }
 
@@ -1866,15 +1913,16 @@ app.ticker.add(delta => {
     }
 
     if (dragState && dragState.type === 'lasso') {
+        // selectionBox is in worldContainer (world-space) — convert screen → world
+        const _sc = worldContainer.scale.x;
+        const _wx1 = (Math.min(dragState.sX, dragState.curX) - worldContainer.x) / _sc;
+        const _wy1 = (Math.min(dragState.sY, dragState.curY) - worldContainer.y) / _sc;
+        const _ww  = Math.abs(dragState.curX - dragState.sX) / _sc;
+        const _wh  = Math.abs(dragState.curY - dragState.sY) / _sc;
         selectionBox.clear();
         selectionBox.lineStyle(1, 0x00ccff, 0.8);
         selectionBox.beginFill(0x00ccff, 0.1);
-        selectionBox.drawRect(
-            Math.min(dragState.sX, dragState.curX),
-            Math.min(dragState.sY, dragState.curY),
-            Math.abs(dragState.curX - dragState.sX),
-            Math.abs(dragState.curY - dragState.sY)
-        );
+        selectionBox.drawRect(_wx1, _wy1, _ww, _wh);
         selectionBox.endFill();
     } else {
         selectionBox.clear();
@@ -1896,6 +1944,8 @@ const P = {
     nameGrp: gP('prop-name-group'), name: gP('prop-name'), shape: gP('prop-shape'),
     size: gP('prop-size'), szGrp: gP('prop-size-group'), whGrp: gP('prop-wh-group'),
     width: gP('prop-width'), height: gP('prop-height'),
+    miniProps: gP('mini-bubble-props'), miniShape: gP('mini-shape'),
+    miniRadius: gP('mini-border-radius'), miniW: gP('mini-width'), miniH: gP('mini-height'),
     bg: gP('prop-bg-color'), border: gP('prop-border-color'), glow: gP('prop-glow-color'),
     lUG: gP('prop-link-use-global'), lType: gP('prop-link-type'), lMode: gP('prop-link-mode'), gap: gP('prop-link-gap'),
     bgHas: gP('prop-link-hasbg'), bgCol: gP('prop-link-bgcol'), bgWid: gP('prop-link-bgwid'),
@@ -1944,7 +1994,9 @@ function selectEntity(type, id, showPanel = false) {
         pp.style.left = Math.max(10, px) + 'px';
         pp.style.top = py + 'px';
     }
-    gP('main-bubble-props').style.display = type === 'main' ? 'block' : 'none'; gP('color-props').style.display = (type === 'main' || type === 'mini') ? 'block' : 'none';
+    gP('main-bubble-props').style.display = type === 'main' ? 'block' : 'none';
+    if (P.miniProps) P.miniProps.style.display = type === 'mini' ? 'block' : 'none';
+    gP('color-props').style.display = (type === 'main' || type === 'mini') ? 'block' : 'none';
     gP('link-props').style.display = type === 'link' ? 'block' : 'none'; gP('entity-actions').style.display = type === 'link' ? 'none' : 'flex';
     P.nameGrp.style.display = type === 'link' ? 'none' : 'flex';
     if (type === 'main') { let b = state.bubbles[id]; if (b) {
@@ -1958,7 +2010,14 @@ function selectEntity(type, id, showPanel = false) {
         if (P.height) P.height.value = _bH(b);
         if (P.bg) { P.bg.value = b.bgColor || ''; let m = (b.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (m) gP('prop-bg-color-picker').value = '#' + (+m[1]).toString(16).padStart(2, '0') + (+m[2]).toString(16).padStart(2, '0') + (+m[3]).toString(16).padStart(2, '0'); }
         if (P.border) P.border.value = b.borderColor || ''; if (P.glow) P.glow.value = b.glowColor || ''; } }
-    else if (type === 'mini') { let m = state.minis[id]; if (m) { if (P.name) P.name.value = m.name || ''; if (P.bg) { P.bg.value = m.bgColor || ''; let x = (m.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (x) gP('prop-bg-color-picker').value = '#' + (+x[1]).toString(16).padStart(2, '0') + (+x[2]).toString(16).padStart(2, '0') + (+x[3]).toString(16).padStart(2, '0'); } if (P.border) P.border.value = m.borderColor || ''; if (P.glow) P.glow.value = m.glowColor || ''; } }
+    else if (type === 'mini') { let m = state.minis[id]; if (m) {
+        if (P.name) P.name.value = m.name || '';
+        if (P.miniShape) P.miniShape.value = m.shape || 'pill';
+        if (P.miniRadius) P.miniRadius.value = m.borderRadius != null ? m.borderRadius : 20;
+        if (P.miniW) P.miniW.value = m.w || '';
+        if (P.miniH) P.miniH.value = m.h || '';
+        if (P.bg) { P.bg.value = m.bgColor || ''; let x = (m.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (x) gP('prop-bg-color-picker').value = '#' + (+x[1]).toString(16).padStart(2, '0') + (+x[2]).toString(16).padStart(2, '0') + (+x[3]).toString(16).padStart(2, '0'); }
+        if (P.border) P.border.value = m.borderColor || ''; if (P.glow) P.glow.value = m.glowColor || ''; } }
     else if (type === 'link') {
         let l = state.links[id]; if (!l) return;
         if (P.lUG) P.lUG.checked = l.useGlobalAnim !== false; gP('prop-link-hidelines').checked = !!l.hideLines;
@@ -2028,6 +2087,9 @@ bC(gP('prop-global-hidelines'), 'global.hideLines'); bC(gP('prop-global-eco'), '
 let qgm = document.getElementById('quick-global-mode');
 if (qgm) { qgm.value = state.globalAnimConfig.mode || 'pixi_dash'; qgm.onchange = e => { state.globalAnimConfig.mode = e.target.value; if (!selectedEntity) selectEntity(null, null); queueRender(); saveState(); }; }
 
+// Mini-bubble binds
+bI(P.miniShape, 'shape'); bI(P.miniRadius, 'borderRadius', parseInt);
+bI(P.miniW, 'w', parseInt); bI(P.miniH, 'h', parseInt);
 // Link prop binds
 bC(P.lUG, 'useGlobalAnim'); bC(gP('prop-link-hidelines'), 'hideLines');
 bI(P.name, 'name');
@@ -2083,14 +2145,17 @@ if (bami) bami.onclick = () => {
     if (b) { state.minis[id] = { id, name: 'Мини', parentId: b.id, x: _bW(b) / 2, y: _bH(b) / 2, bgColor: 'rgba(0,255,200,0.2)', borderColor: '#00ffcc', glowColor: '#00ffcc' }; queueRender(); selectEntity('mini', id); saveState(); }
 };
 
-// Toolbar: Delete
-let bd = document.getElementById('btn-delete');
-if (bd) bd.onclick = () => {
+// Toolbar: Delete + Properties panel "Удалить"
+function _doDelete() {
     if (!selectedEntity) return;
     if (selectedEntity.type === 'main') { delete state.bubbles[selectedEntity.id]; for (let m in state.minis) if (state.minis[m] && state.minis[m].parentId === selectedEntity.id) delete state.minis[m]; for (let p in state.points) if (state.points[p] && state.points[p].attachedTo === selectedEntity.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX || 0; state.points[p].y = state.points[p]._renderedY || 0; } }
     if (selectedEntity.type === 'mini') { delete state.minis[selectedEntity.id]; for (let p in state.points) if (state.points[p] && state.points[p].attachedTo === selectedEntity.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX || 0; state.points[p].y = state.points[p]._renderedY || 0; } }
-    selectEntity(null, null); saveState();
-};
+    selectEntity(null, null); queueRender(); saveState();
+}
+let _bde = document.getElementById('btn-del-entity');
+if (_bde) _bde.onclick = _doDelete;
+let bd = document.getElementById('btn-delete');
+if (bd) bd.onclick = _doDelete;
 
 // Toolbar: Delete Link
 let bdl = document.getElementById('btn-delete-link');
