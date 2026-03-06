@@ -210,7 +210,7 @@ let defaultLP = { type: 'sharp', lineMode: 'single', color: '#00ffcc' };
 if (!state.points) state.points = {}; if (!state.bubbles) state.bubbles = {}; if (!state.minis) state.minis = {};
 // Expose state access for workspace_engine.js
 window.getBubbleState = () => state;
-window.setBubbleState = (s) => { state = s; if (!state.cgData) state.cgData = {}; };
+window.setBubbleState = (s) => { state = s; if (!state.cgData) state.cgData = {}; if (!state.globalAnimConfig) state.globalAnimConfig = { mode:'pixi_dash', shape:'drop', size:1, count:1, wobble:0, emojis:'❤️⭐✨', hideLines:false, ecoMode:false, hasGlow:true }; if (!state.bubbles) state.bubbles={}; if (!state.minis) state.minis={}; if (!state.links) state.links={}; if (!state.points) state.points={}; };
 
 // Migrate links
 let la = Array.isArray(state.links) ? state.links : Object.values(state.links || {});
@@ -1995,7 +1995,7 @@ function selectEntity(type, id, showPanel = false) {
     let pp = gP('properties-panel');
     if (!selectedEntity) {
         gP('global-props').style.display = 'block'; gP('main-bubble-props').style.display = 'none'; gP('color-props').style.display = 'none'; gP('link-props').style.display = 'none'; gP('entity-actions').style.display = 'none'; P.nameGrp.style.display = 'none'; gP('prop-title').innerText = "Рабочая область";
-        let gc = state.globalAnimConfig; gP('prop-global-mode').value = gc.mode || 'pixi_dash'; gP('prop-global-shape').value = gc.shape || 'drop'; gP('prop-global-emojis').value = gc.emojis || '❤️⭐✨'; gP('prop-global-size').value = gc.size || 1; gP('prop-global-count').value = gc.count || 1; gP('prop-global-wobble').value = gc.wobble || 0; gP('prop-global-hidelines').checked = !!gc.hideLines; let eco = gP('prop-global-eco'); if (eco) eco.checked = !!gc.ecoMode;
+        let gc = state.globalAnimConfig || {}; gP('prop-global-mode').value = gc.mode || 'pixi_dash'; gP('prop-global-shape').value = gc.shape || 'drop'; gP('prop-global-emojis').value = gc.emojis || '❤️⭐✨'; gP('prop-global-size').value = gc.size || 1; gP('prop-global-count').value = gc.count || 1; gP('prop-global-wobble').value = gc.wobble || 0; gP('prop-global-hidelines').checked = !!gc.hideLines; let eco = gP('prop-global-eco'); if (eco) eco.checked = !!gc.ecoMode;
         uVBM(gc.mode, gP('wrap-global-shape'), gP('wrap-global-emojis'), gP('wrap-global-sliders'));
         if (pp) pp.style.display = 'none';
         return;

@@ -490,7 +490,6 @@ window.switchTab=function(id){
   if(id==='5')renderGal();
 };
 document.querySelectorAll('.tb').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
-if (window._embedTab) switchTab(window._embedTab);
 
 // ─── TAB 1: UI KIT ───────────────────────────────────────────
 window.switchUiTab=function(sub){
@@ -612,6 +611,7 @@ function renderPal(){
 
 // ─── ADD TO CANVAS ────────────────────────────────────────────
 const CW=4000,CH=3000;
+if (window._embedTab) { switchTab(window._embedTab); window._embedTab=null; }
 window.addToCanvas=function(tplId){
   if(tplId.startsWith('uik_')){
     const tpl=S.uiKit.find(i=>i.id===tplId);if(!tpl)return;
