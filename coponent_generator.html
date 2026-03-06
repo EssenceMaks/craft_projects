@@ -465,15 +465,8 @@ function uid(){return Math.random().toString(36).substr(2,6);}
   if (p.get('embed') === '1') {
     const cb = document.getElementById('cloud-bar');
     if (cb) cb.innerHTML = '<span style="font-size:10px;color:#6b7280;padding:0 8px;">🔒 live sync via Supabase</span>';
-    const tabId = p.get('tab');
-    if (tabId) {
-      // Single-tab embed: hide full nav bar, show only this tab
-      const nb = document.getElementById('nb');
-      if (nb) nb.style.display = 'none';
-      document.addEventListener('DOMContentLoaded', () => {}, { once: true });
-      // Defer switchTab until after switchTab is defined
-      window._embedTab = tabId;
-    }
+    const nb = document.getElementById('nb');
+    if (nb) nb.style.display = 'none';
   }
 })();
 
@@ -611,7 +604,6 @@ function renderPal(){
 
 // ─── ADD TO CANVAS ────────────────────────────────────────────
 const CW=4000,CH=3000;
-if (window._embedTab) { switchTab(window._embedTab); window._embedTab=null; }
 window.addToCanvas=function(tplId){
   if(tplId.startsWith('uik_')){
     const tpl=S.uiKit.find(i=>i.id===tplId);if(!tpl)return;
