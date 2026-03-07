@@ -338,6 +338,12 @@ window.restoreCGFromState = function () {
       if (!layout.panels[i]) return;
       panel.wx = layout.panels[i].wx; panel.wy = layout.panels[i].wy;
       panel.ww = layout.panels[i].ww; panel.wh = layout.panels[i].wh;
+
+      // Sanity check for old saves that had the 6000px bug
+      if (layout.tabbed && panel.ww > 2000) {
+        panel.ww = CG_CFG.MINI_W || 1200;
+      }
+
       if (panel.el) {
         panel.el.style.width = panel.ww + 'px';
         panel.el.style.height = panel.wh + 'px';
