@@ -192,7 +192,7 @@ window.addEventListener('wheel', e => {
     // Apply camera bounds after zoom
     if (typeof applyCameraBounds === 'function') applyCameraBounds();
 
-    queueRender();
+    queueCameraUpdate();
 }, { passive: false });
 
 // Global Pointer tracking for Edge Panning
@@ -1071,7 +1071,7 @@ app.stage.on('pointermove', e => {
         worldContainer.x += dx; worldContainer.y += dy;
         cam.panStartX = e.global.x; cam.panStartY = e.global.y;
         if (typeof applyCameraBounds === 'function') applyCameraBounds();
-        queueRender();
+        queueCameraUpdate();
     }
     if (dragState && dragState.type === 'lasso') {
         dragState.curX = e.global.x; dragState.curY = e.global.y; queueRender();
@@ -2477,7 +2477,9 @@ let blBtn = document.getElementById('btn-link');
 if (blBtn) blBtn.onclick = () => { linkingMode = !linkingMode; linkingSourcePointId = null; let t = document.getElementById('link-tools'); if (linkingMode) { blBtn.classList.add('active'); if (t) t.style.display = 'flex'; } else { blBtn.classList.remove('active'); if (t) t.style.display = 'none'; } queueRender(); };
 
 // Main loop
+let cameraMoved = false;
 function queueRender() { needsRender = true; if (!app.ticker.started) app.ticker.start(); }
+function queueCameraUpdate() { cameraMoved = true; if (!app.ticker.started) app.ticker.start(); }
 app.ticker.add(delta => {
     let deltaTimeMs = app.ticker.deltaMS || 16.666;
     let hasP = false; for (let id in partSys) { if (partSys[id] && partSys[id].length > 0) { hasP = true; break; } }
@@ -2518,7 +2520,7 @@ app.ticker.add(delta => {
 
     if (isPanning) {
         if (typeof applyCameraBounds === 'function') applyCameraBounds();
-        needsRender = true;
+        cameraMoved = true;
     }
 
     // Update FPS Counter
@@ -2546,18 +2548,40 @@ app.ticker.add(delta => {
         selectionBox.clear();
     }
 
-    if (needsRender || isAnimActive) {
+    if (needsRender || isAnimActive || cameraMoved) {
         if (state.animationMode === 'play') animTime += (deltaTimeMs / 1000);
         let fr = needsRender;
         if (fr) { renderBubbles(); renderMinis(); renderPoints(); }
         renderLinks(fr, deltaTimeMs);
-        renderMinimap();
+        if (fr || cameraMoved) renderMinimap();
         needsRender = false;
 
         let hudLayer = document.getElementById('point-hud-layer');
-        if (hudLayer) {
+        if (hudLayer && (fr || cameraMoved)) {
             hudLayer.style.transform = `translate(${worldContainer.x}px, ${worldContainer.y}px) scale(${worldContainer.scale.x})`;
         }
+
+        // Redraw lasers during camera pan to keep them glued to absolute HTML elements
+        if (!fr && cameraMoved && window.hudCopies && window.laserGrp) {
+            window.laserGrp.clear();
+            for (let i = window.hudCopies.length - 1; i >= 0; i--) {
+                let cp = window.hudCopies[i];
+                let cpd = state.points[cp.pId];
+                if (cp.el._laserOn && cpd) {
+                    let rect = cp.el.getBoundingClientRect();
+                    let sc = worldContainer.scale.x;
+                    let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+                    let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+                    window.laserGrp.lineStyle(2, 0x00ffcc, 0.8);
+                    let cx = cpd._renderedX != null ? cpd._renderedX : (cpd.x || 0);
+                    let cy = cpd._renderedY != null ? cpd._renderedY : (cpd.y || 0);
+                    window.laserGrp.moveTo(cx, cy);
+                    window.laserGrp.lineTo(wx, wy);
+                }
+            }
+        }
+
+        cameraMoved = false;
     } else { if (!isPanning) app.ticker.stop(); }
 });
 
