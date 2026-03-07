@@ -215,11 +215,14 @@ window.setBubbleState = (s) => {
     state = s;
     if (!state.cgData) state.cgData = {};
     if (!state.globalAnimConfig) state.globalAnimConfig = { mode: 'pixi_dash', shape: 'drop', size: 1, count: 1, wobble: 0, emojis: '❤️⭐✨', hideLines: false, ecoMode: false, hasGlow: true };
+    if (!state.globalAnimConfig.seed) state.globalAnimConfig.seed = 'session_' + Math.random().toString(36).substr(2, 9);
     if (!state.globalTokenStats) state.globalTokenStats = { retained: 0, producedByQ: {} };
     if (!state.bubbles) state.bubbles = {};
     if (!state.minis) state.minis = {};
     if (!state.links) state.links = {};
     if (!state.points) state.points = {};
+
+    animTime = 0; // Reset deterministic timer on load
 
     // Complete history reset based on newly loaded data
     if (typeof stateHistory !== 'undefined') {
@@ -453,6 +456,9 @@ if (btnHidePinnedHuds) {
 const btnClearTokens = document.getElementById('btn-clear-tokens');
 if (btnClearTokens) {
     btnClearTokens.onclick = () => {
+        animTime = 0; // Reset deterministic timer
+        state.globalAnimConfig.seed = 'session_' + Math.random().toString(36).substr(2, 9); // Roll a new base seed on clear
+
         // Clear all active tokens from partSys
         for (let lId in partSys) {
             let pArr = partSys[lId];
@@ -471,8 +477,12 @@ if (btnClearTokens) {
         }
 
         // Reset global token statistics
-        window.globalRetainedTokens = 0;
-        window.globalProducedByQ = {};
+        state.globalTokenStats = {
+            totalSpawned: 0,
+            totalActive: 0,
+            retained: 0,
+            producedByQ: {}
+        };
 
         // Reset point statistics
         for (let pId in state.points) {
@@ -1355,7 +1365,15 @@ function renderMinis() {
 
 // Render Links
 let animTime = 0;
-function renderLinks(fullRebuild = true) {
+function renderLinks(fullRebuild = true, deltaTimeMs = 16.666) {
+    let dtSec = deltaTimeMs / 1000;
+
+    // Setup deterministic random generator based on session seed
+    let seed = state.globalAnimConfig.seed;
+    if (!seed) { seed = 'session_' + Math.random().toString(36).substr(2, 9); state.globalAnimConfig.seed = seed; }
+    // We instantiate a predictable random generator for visual tokens
+    let prng = Math.seedrandom ? new Math.seedrandom(seed + '_' + Math.floor(animTime)) : Math.random;
+
     let active = new Set(Object.keys(state.links)); if (fullRebuild) { for (let id in pxL) { if (!active.has(id)) { dLC(id); delete partSys[id]; } } }
     Object.values(state.links).forEach(link => {
         if (!link) return; let cache = pxL[link.id];
@@ -1549,8 +1567,8 @@ function renderLinks(fullRebuild = true) {
             vAbs2 = gSMode === 'abs' ? gSVal : (cache.pL2 > 0 ? cache.pL2 / Math.max(0.1, gSVal) : 50);
         }
 
-        let sp1 = vAbs1 / 60; // pixels per frame
-        let sp2 = vAbs2 / 60; // pixels per frame
+        let sp1 = vAbs1 * dtSec; // pixels this frame
+        let sp2 = vAbs2 * dtSec; // pixels this frame
 
         // Dashed lines should ALWAYS render as dashed if isDash1 is true.
         // Optimization: rebuilding Graphics Paths every frame tanks FPS. Throttle Dash regeneration to every 3rd frame.
@@ -1558,7 +1576,7 @@ function renderLinks(fullRebuild = true) {
         let shouldRedrawL1 = fullRebuild || (isDash1 && !c1.isP && !hid1 && (cache.dashTick % 3 === 0 || localNeedsRender));
         if (shouldRedrawL1) {
             cache.l1.clear();
-            if (isDash1 && !c1.isP && !hid1) { let dL = at1.includes('dots') ? 1 : 15, gL = 15, dir = at1.includes('bwd') ? 1 : -1; if (link.l1Reverse) dir *= -1; drawDash(cache.l1, cache.lut1, c1H, link.width1 || 2, 1, dL, gL, animTime * sp1 * dir); }
+            if (isDash1 && !c1.isP && !hid1) { let dL = at1.includes('dots') ? 1 : 15, gL = 15, dir = at1.includes('bwd') ? 1 : -1; if (link.l1Reverse) dir *= -1; drawDash(cache.l1, cache.lut1, c1H, link.width1 || 2, 1, dL, gL, animTime * vAbs1 * dir); }
             else if (!c1.isP) drawPath(cache.l1, cache.p1 || ap, link.type, c1H, link.width1 || 2, lA1);
             else if (!hid1) drawPath(cache.l1, cache.p1 || ap, link.type, c1H, Math.max(1, (link.width1 || 2) * 0.3), lA1 * 0.3);
         }
@@ -1567,7 +1585,7 @@ function renderLinks(fullRebuild = true) {
             let shouldRedrawL2 = fullRebuild || (isDash2 && !c2.isP && !hid2 && (cache.dashTick % 3 === 0 || localNeedsRender));
             if (shouldRedrawL2) {
                 cache.l2.clear();
-                if (isDash2 && !c2.isP && !hid2) { let dL = at2.includes('dots') ? 1 : 15, gL = 15, dir = at2.includes('bwd') ? 1 : -1; if (link.l2Reverse) dir *= -1; drawDash(cache.l2, cache.lut2, c2H, link.width2 || 2, 1, dL, gL, animTime * sp2 * dir); }
+                if (isDash2 && !c2.isP && !hid2) { let dL = at2.includes('dots') ? 1 : 15, gL = 15, dir = at2.includes('bwd') ? 1 : -1; if (link.l2Reverse) dir *= -1; drawDash(cache.l2, cache.lut2, c2H, link.width2 || 2, 1, dL, gL, animTime * vAbs2 * dir); }
                 else if (!c2.isP) drawPath(cache.l2, cache.p2 || [], link.type, c2H, link.width2 || 2, lA2);
                 else if (!hid2) drawPath(cache.l2, cache.p2 || [], link.type, c2H, Math.max(1, (link.width2 || 2) * 0.3), lA2 * 0.3);
             }
@@ -1591,20 +1609,20 @@ function renderLinks(fullRebuild = true) {
                 let ptPaused = startPt && startPt.paused;
 
                 if (!ptPaused) {
-                    let V1 = sp1;
+                    let V1 = sp1; // Pixels this frame
                     let D1 = 40 / (parseFloat(c1.count) || 1);
                     if (cache.pL1 > 0) {
-                        let bs1 = V1 / cache.pL1;
+                        let bs1 = vAbs1 / cache.pL1; // Fraction traversed per second!
                         cache.sA1 = (cache.sA1 || 0) + (V1 / D1);
                         while (cache.sA1 >= 1) {
                             cache.sA1 -= 1;
                             let em = [...(c1.emojis || '✨')];
-                            let sym = em[Math.floor(Math.random() * em.length)] || '✨';
+                            let sym = em[Math.floor(prng() * em.length)] || '✨';
 
-                            let tData = { q: Math.random().toFixed(2), p: Math.floor(Math.random() * 100) + 1, m: 0 };
+                            let tData = { q: prng().toFixed(2), p: Math.floor(prng() * 100) + 1, m: 0 };
                             if (cache.deadSprites && cache.deadSprites.length > 0) {
                                 let oldD = cache.deadSprites[cache.deadSprites.length - 1]._tData;
-                                if (oldD && Math.random() > 0.5) { // 50% chance to retain and upgrade
+                                if (oldD && prng() > 0.5) { // 50% chance to retain and upgrade
                                     tData = oldD;
                                     tData.m = (tData.m || 0) + 1;
                                     state.globalTokenStats.retained = (state.globalTokenStats.retained || 0) + 1;
@@ -1616,7 +1634,7 @@ function renderLinks(fullRebuild = true) {
                             state.globalTokenStats.producedByQ = state.globalTokenStats.producedByQ || {};
                             state.globalTokenStats.producedByQ[qKey] = (state.globalTokenStats.producedByQ[qKey] || 0) + 1;
 
-                            pArr.push({ t: bw1 ? 1 : 0, speed: bs1 * (bw1 ? -1 : 1), li: 1, sym: sym, offY: (Math.random() - 0.5) * (c1.wobble || 0), sprite: null, tData: tData, wpIdx: bw1 ? (link.waypoints ? link.waypoints.length : 0) : -1 });
+                            pArr.push({ t: bw1 ? 1 : 0, speed: bs1 * (bw1 ? -1 : 1), li: 1, sym: sym, offY: (prng() - 0.5) * (c1.wobble || 0), sprite: null, tData: tData, wpIdx: bw1 ? (link.waypoints ? link.waypoints.length : 0) : -1 });
                             if (startPt) {
                                 startPt.stats = startPt.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
                                 startPt.stats.spawned++;
@@ -1636,20 +1654,20 @@ function renderLinks(fullRebuild = true) {
                 let ptPaused = startPt && startPt.paused;
 
                 if (!ptPaused) {
-                    let V2 = sp2;
+                    let V2 = sp2; // Pixels this frame
                     let D2 = 40 / (parseFloat(c2.count) || 1);
                     if (cache.pL2 > 0) {
-                        let bs2 = V2 / cache.pL2;
+                        let bs2 = vAbs2 / cache.pL2; // Fraction traversed per second!
                         cache.sA2 = (cache.sA2 || 0) + (V2 / D2);
                         while (cache.sA2 >= 1) {
                             cache.sA2 -= 1;
                             let em = [...(c2.emojis || '✨')];
-                            let sym = em[Math.floor(Math.random() * em.length)] || '✨';
+                            let sym = em[Math.floor(prng() * em.length)] || '✨';
 
-                            let tData = { q: Math.random().toFixed(2), p: Math.floor(Math.random() * 100) + 1, m: 0 };
+                            let tData = { q: prng().toFixed(2), p: Math.floor(prng() * 100) + 1, m: 0 };
                             if (cache.deadSprites && cache.deadSprites.length > 0) {
                                 let oldD = cache.deadSprites[cache.deadSprites.length - 1]._tData;
-                                if (oldD && Math.random() > 0.5) { // 50% chance to retain and upgrade
+                                if (oldD && prng() > 0.5) { // 50% chance to retain and upgrade
                                     tData = oldD;
                                     tData.m = (tData.m || 0) + 1;
                                     state.globalTokenStats.retained = (state.globalTokenStats.retained || 0) + 1;
@@ -1661,7 +1679,7 @@ function renderLinks(fullRebuild = true) {
                             state.globalTokenStats.producedByQ = state.globalTokenStats.producedByQ || {};
                             state.globalTokenStats.producedByQ[qKey] = (state.globalTokenStats.producedByQ[qKey] || 0) + 1;
 
-                            pArr.push({ t: bw2 ? 1 : 0, speed: bs2 * (bw2 ? -1 : 1), li: 2, sym: sym, offY: (Math.random() - 0.5) * (c2.wobble || 0), sprite: null, tData: tData, wpIdx: bw2 ? (link.waypoints ? link.waypoints.length : 0) : -1 });
+                            pArr.push({ t: bw2 ? 1 : 0, speed: bs2 * (bw2 ? -1 : 1), li: 2, sym: sym, offY: (prng() - 0.5) * (c2.wobble || 0), sprite: null, tData: tData, wpIdx: bw2 ? (link.waypoints ? link.waypoints.length : 0) : -1 });
                             if (startPt) {
                                 startPt.stats = startPt.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
                                 startPt.stats.spawned++;
@@ -1686,7 +1704,7 @@ function renderLinks(fullRebuild = true) {
             if (linePaused) continue; // Pause individual particles if line is paused
 
             let oldT = p.t;
-            if (state.animationMode === 'play' && isActiveAnim) p.t += p.speed;
+            if (state.animationMode === 'play' && isActiveAnim) p.t += (p.speed * dtSec);
 
             // Waypoint crossing logic with Checkpoints (wpIdx)
             if (link.waypoints && state.animationMode === 'play' && isActiveAnim) {
@@ -2020,225 +2038,223 @@ function renderPoints() {
                 pt.hudY = (e.clientY - worldContainer.y) / sc - hudDragDY;
                 queueRender();
             };
-            queueRender();
-        };
-        htmlHud.onpointerup = htmlHud.onpointercancel = e => {
-            isDraggingHud = false; htmlHud.releasePointerCapture(e.pointerId);
-        };
+            htmlHud.onpointerup = htmlHud.onpointercancel = e => {
+                isDraggingHud = false; htmlHud.releasePointerCapture(e.pointerId);
+            };
 
-        ctn.addChild(g);
-        cache = { ctn, g, htmlHud }; pxP[pId] = cache;
+            ctn.addChild(g);
+            cache = { ctn, g, htmlHud }; pxP[pId] = cache;
 
-        g.on('pointerdown', e => {
-            // If we clicked on the HTML HUD, don't let Pixi capture it
-            let ev = e.data && e.data.originalEvent;
-            if (ev && ev.target && (ev.target.closest('.point-html-hud') || ev.target.className.includes('hud-btn'))) {
-                return; // Ignore completely
-            }
-
-            e.stopPropagation();
-            if (ctxMenu) ctxMenu.style.display = 'none';
-            if (linkingMode) { handleLinking(pId); return; }
-            if (lineCreationMode) { handleLineSeqClick(pId); return; }
-
-            // If it's a left click, select the point to keep HUD open and start dragging
-            if (e.button === 0) {
-                selectedPointId = pId;
-                dragState = { type: 'point', id: pId, isNew: true, sX: e.global.x, sY: e.global.y };
-            }
-            queueRender();
-        });
-        g.on('rightclick', e => { e.stopPropagation(); openRPM(pId, { clientX: e.global.x, clientY: e.global.y }); });
-        g.on('pointerover', e => { hoveredPointId = pId; queueRender(); });
-        g.on('pointerout', e => { if (hoveredPointId === pId) { hoveredPointId = null; queueRender(); } });
-    }
-
-    let pd = state.points[pId]; // grab the most up to date reference per render loop
-    if (!pd) return;
-
-    let cx = pd._renderedX != null ? pd._renderedX : (pd.x || 0), cy = pd._renderedY != null ? pd._renderedY : (pd.y || 0);
-    let isLinkSel = false, isLinkHov = false;
-    Object.values(state.links).forEach(l => { if (!l) return; if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) { if (selectedEntity && selectedEntity.type === 'link' && selectedEntity.id === l.id) isLinkSel = true; if (hoveredLinkId === l.id) isLinkHov = true; } });
-    let isDr = dragState && dragState.id === pId;
-    let isSelPt = selectedPointId === pId;
-
-    let isPinnedVisible = pd.pinned && !window.globalHidePinnedHuds;
-    let show = window.globalShowAllHuds || linkingMode || isLinkSel || isLinkHov || isDr || pId === linkingSourcePointId || hoveredPointId === pId || isSelPt || isPinnedVisible;
-
-    cache.g.clear();
-    if (show) {
-        let col = isSelPt ? 0xff0066 : (u > 1 ? 0xf39c12 : 0x2ecc71);
-        cache.g.beginFill(0, 0.001); cache.g.drawCircle(0, 0, 16); cache.g.endFill();
-        cache.g.beginFill(col, 1); cache.g.drawCircle(0, 0, 8); cache.g.endFill();
-        cache.g.lineStyle(2, 0xffffff, 1); cache.g.drawCircle(0, 0, 8);
-    }
-    cache.ctn.position.set(cx, cy);
-    cache.g.eventMode = show ? 'static' : 'none';
-    cache.ctn.visible = show;
-
-    let showHud = window.globalShowAllHuds || hoveredPointId === pId || isSelPt || isPinnedVisible;
-    if (showHud) {
-        let st = pd.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
-        let linesInfo = '';
-        let pLinks = [];
-        Object.values(state.links).forEach(l => {
-            if (!l) return;
-            if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) pLinks.push(l);
-        });
-        if (pLinks.length > 0) {
-            pLinks.forEach((l, idx) => {
-                let lj = idx + 1; // 1-based index
-                let hasDirStats = false;
-                let lineTxt = '';
-
-                let sf = st.spawnDir ? (st.spawnDir[l.id + '_fwd'] || 0) : 0;
-                let sb = st.spawnDir ? (st.spawnDir[l.id + '_bwd'] || 0) : 0;
-                let pf = st.passDir ? (st.passDir[l.id + '_fwd'] || 0) : 0;
-                let pb = st.passDir ? (st.passDir[l.id + '_bwd'] || 0) : 0;
-                let af = st.arriveDir ? (st.arriveDir[l.id + '_fwd'] || 0) : 0;
-                let ab = st.arriveDir ? (st.arriveDir[l.id + '_bwd'] || 0) : 0;
-
-                if (l.from === pId) { lineTxt += `${lj} ==> отпущено: ${sf}\n`; hasDirStats = true; }
-                if (l.to === pId && l.lineMode === 'double') { lineTxt += `${lj} <== отпущено: ${sb}\n`; hasDirStats = true; }
-
-                if (l.waypoints && l.waypoints.includes(pId)) {
-                    lineTxt += `=${lj}=> пройдено: ${pf}\n`;
-                    if (l.lineMode === 'double') lineTxt += `<=${lj}= пройдено: ${pb}\n`;
-                    hasDirStats = true;
+            g.on('pointerdown', e => {
+                // If we clicked on the HTML HUD, don't let Pixi capture it
+                let ev = e.data && e.data.originalEvent;
+                if (ev && ev.target && (ev.target.closest('.point-html-hud') || ev.target.className.includes('hud-btn'))) {
+                    return; // Ignore completely
                 }
 
-                if (l.to === pId) { lineTxt += `${lj} ==> принято: ${af}\n`; hasDirStats = true; }
-                if (l.from === pId && l.lineMode === 'double') { lineTxt += `${lj} <== принято: ${ab}\n`; hasDirStats = true; }
+                e.stopPropagation();
+                if (ctxMenu) ctxMenu.style.display = 'none';
+                if (linkingMode) { handleLinking(pId); return; }
+                if (lineCreationMode) { handleLineSeqClick(pId); return; }
 
-                if (hasDirStats) linesInfo += lineTxt;
+                // If it's a left click, select the point to keep HUD open and start dragging
+                if (e.button === 0) {
+                    selectedPointId = pId;
+                    dragState = { type: 'point', id: pId, isNew: true, sX: e.global.x, sY: e.global.y };
+                }
+                queueRender();
             });
+            g.on('rightclick', e => { e.stopPropagation(); openRPM(pId, { clientX: e.global.x, clientY: e.global.y }); });
+            g.on('pointerover', e => { hoveredPointId = pId; queueRender(); });
+            g.on('pointerout', e => { if (hoveredPointId === pId) { hoveredPointId = null; queueRender(); } });
+        }
+
+        pd = state.points[pId]; // grab the most up to date reference per render loop
+        if (!pd) return;
+
+        let cx = pd._renderedX != null ? pd._renderedX : (pd.x || 0), cy = pd._renderedY != null ? pd._renderedY : (pd.y || 0);
+        let isLinkSel = false, isLinkHov = false;
+        Object.values(state.links).forEach(l => { if (!l) return; if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) { if (selectedEntity && selectedEntity.type === 'link' && selectedEntity.id === l.id) isLinkSel = true; if (hoveredLinkId === l.id) isLinkHov = true; } });
+        let isDr = dragState && dragState.id === pId;
+        let isSelPt = selectedPointId === pId;
+
+        let isPinnedVisible = pd.pinned && !window.globalHidePinnedHuds;
+        let show = window.globalShowAllHuds || linkingMode || isLinkSel || isLinkHov || isDr || pId === linkingSourcePointId || hoveredPointId === pId || isSelPt || isPinnedVisible;
+
+        cache.g.clear();
+        if (show) {
+            let col = isSelPt ? 0xff0066 : (u > 1 ? 0xf39c12 : 0x2ecc71);
+            cache.g.beginFill(0, 0.001); cache.g.drawCircle(0, 0, 16); cache.g.endFill();
+            cache.g.beginFill(col, 1); cache.g.drawCircle(0, 0, 8); cache.g.endFill();
+            cache.g.lineStyle(2, 0xffffff, 1); cache.g.drawCircle(0, 0, 8);
+        }
+        cache.ctn.position.set(cx, cy);
+        cache.g.eventMode = show ? 'static' : 'none';
+        cache.ctn.visible = show;
+
+        let showHud = window.globalShowAllHuds || hoveredPointId === pId || isSelPt || isPinnedVisible;
+        if (showHud) {
+            let st = pd.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+            let linesInfo = '';
+            let pLinks = [];
+            Object.values(state.links).forEach(l => {
+                if (!l) return;
+                if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) pLinks.push(l);
+            });
+            if (pLinks.length > 0) {
+                pLinks.forEach((l, idx) => {
+                    let lj = idx + 1; // 1-based index
+                    let hasDirStats = false;
+                    let lineTxt = '';
+
+                    let sf = st.spawnDir ? (st.spawnDir[l.id + '_fwd'] || 0) : 0;
+                    let sb = st.spawnDir ? (st.spawnDir[l.id + '_bwd'] || 0) : 0;
+                    let pf = st.passDir ? (st.passDir[l.id + '_fwd'] || 0) : 0;
+                    let pb = st.passDir ? (st.passDir[l.id + '_bwd'] || 0) : 0;
+                    let af = st.arriveDir ? (st.arriveDir[l.id + '_fwd'] || 0) : 0;
+                    let ab = st.arriveDir ? (st.arriveDir[l.id + '_bwd'] || 0) : 0;
+
+                    if (l.from === pId) { lineTxt += `${lj} ==> отпущено: ${sf}\n`; hasDirStats = true; }
+                    if (l.to === pId && l.lineMode === 'double') { lineTxt += `${lj} <== отпущено: ${sb}\n`; hasDirStats = true; }
+
+                    if (l.waypoints && l.waypoints.includes(pId)) {
+                        lineTxt += `=${lj}=> пройдено: ${pf}\n`;
+                        if (l.lineMode === 'double') lineTxt += `<=${lj}= пройдено: ${pb}\n`;
+                        hasDirStats = true;
+                    }
+
+                    if (l.to === pId) { lineTxt += `${lj} ==> принято: ${af}\n`; hasDirStats = true; }
+                    if (l.from === pId && l.lineMode === 'double') { lineTxt += `${lj} <== принято: ${ab}\n`; hasDirStats = true; }
+
+                    if (hasDirStats) linesInfo += lineTxt;
+                });
+            } else {
+                linesInfo += `Точка без связей\n`;
+            }
+
+            let symTxt = '';
+            for (let s in st.bySym) {
+                if (st.bySym[s] > 0) symTxt += `${s}:${st.bySym[s]} `;
+            }
+            if (symTxt) linesInfo += `(${symTxt})\n`;
+
+            let finalTxt = linesInfo.trim();
+            let cContent = cache.htmlHud.querySelector('.hud-content');
+            if (cContent.innerText !== finalTxt) {
+                cContent.innerText = finalTxt;
+                cache.htmlHud.querySelector('.hud-btn-pin').innerText = pd.pinned ? '📍' : '📌';
+                cache.htmlHud.querySelector('.hud-btn-magnet').innerText = pd.hudDetached ? '🚫🧲' : '🧲';
+                let ptb = cache.htmlHud.querySelector('.hud-btn-pause-pt'); ptb.innerText = pd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = pd.paused ? '#2ecc71' : '#ffa500';
+                let plb = cache.htmlHud.querySelector('.hud-btn-pause-line'); plb.innerText = pd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = pd.linesPaused ? '#2ecc71' : '#ffa500';
+            }
+            cache.htmlHud.style.display = 'block';
+            let hx = pd.hudDetached ? (pd.hudX != null ? pd.hudX : cx) : cx + 20;
+            let hy = pd.hudDetached ? (pd.hudY != null ? pd.hudY : cy) : cy - 20;
+            cache.htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
+            if (pd.hudX == null) pd.hudX = cx;
+            if (pd.hudY == null) pd.hudY = cy;
+
+            if (pd.hudDetached && pd.laserOn) {
+                let rect = cache.htmlHud.getBoundingClientRect();
+                let sc = worldContainer.scale.x;
+                let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+                let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+                window.laserGrp.lineStyle(2, 0x00ffcc, 0.8);
+                window.laserGrp.moveTo(cx, cy);
+                window.laserGrp.lineTo(wx, wy);
+            }
+
+            // Bring to front
+            layerPts.setChildIndex(cache.ctn, layerPts.children.length - 1);
         } else {
-            linesInfo += `Точка без связей\n`;
+            cache.htmlHud.style.display = 'none';
         }
-
-        let symTxt = '';
-        for (let s in st.bySym) {
-            if (st.bySym[s] > 0) symTxt += `${s}:${st.bySym[s]} `;
-        }
-        if (symTxt) linesInfo += `(${symTxt})\n`;
-
-        let finalTxt = linesInfo.trim();
-        let cContent = cache.htmlHud.querySelector('.hud-content');
-        if (cContent.innerText !== finalTxt) {
-            cContent.innerText = finalTxt;
-            cache.htmlHud.querySelector('.hud-btn-pin').innerText = pd.pinned ? '📍' : '📌';
-            cache.htmlHud.querySelector('.hud-btn-magnet').innerText = pd.hudDetached ? '🚫🧲' : '🧲';
-            let ptb = cache.htmlHud.querySelector('.hud-btn-pause-pt'); ptb.innerText = pd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = pd.paused ? '#2ecc71' : '#ffa500';
-            let plb = cache.htmlHud.querySelector('.hud-btn-pause-line'); plb.innerText = pd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = pd.linesPaused ? '#2ecc71' : '#ffa500';
-        }
-        cache.htmlHud.style.display = 'block';
-        let hx = pd.hudDetached ? (pd.hudX != null ? pd.hudX : cx) : cx + 20;
-        let hy = pd.hudDetached ? (pd.hudY != null ? pd.hudY : cy) : cy - 20;
-        cache.htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
-        if (pd.hudX == null) pd.hudX = cx;
-        if (pd.hudY == null) pd.hudY = cy;
-
-        if (pd.hudDetached && pd.laserOn) {
-            let rect = cache.htmlHud.getBoundingClientRect();
-            let sc = worldContainer.scale.x;
-            let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
-            let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
-            window.laserGrp.lineStyle(2, 0x00ffcc, 0.8);
-            window.laserGrp.moveTo(cx, cy);
-            window.laserGrp.lineTo(wx, wy);
-        }
-
-        // Bring to front
-        layerPts.setChildIndex(cache.ctn, layerPts.children.length - 1);
-    } else {
-        cache.htmlHud.style.display = 'none';
     }
-}
 
-// Update global point stats
-let gSpawned = 0, gArrived = 0, gActive = 0;
-for (let id in state.points) {
-    let s = state.points[id].stats;
-    if (s) { gSpawned += (s.spawned || 0); gArrived += (s.arrived || 0); }
-}
-gActive = gSpawned - gArrived;
-let elSp = document.getElementById('global-stat-spawned');
-if (elSp && elSp.innerText !== gSpawned.toString()) elSp.innerText = gSpawned;
-let elAr = document.getElementById('global-stat-arrived');
-if (elAr && elAr.innerText !== gArrived.toString()) elAr.innerText = gArrived;
-let elAc = document.getElementById('global-stat-active');
-if (elAc && elAc.innerText !== gActive.toString()) elAc.innerText = gActive;
+    // Update global point stats
+    let gSpawned = 0, gArrived = 0, gActive = 0;
+    for (let id in state.points) {
+        let s = state.points[id].stats;
+        if (s) { gSpawned += (s.spawned || 0); gArrived += (s.arrived || 0); }
+    }
+    gActive = gSpawned - gArrived;
+    let elSp = document.getElementById('global-stat-spawned');
+    if (elSp && elSp.innerText !== gSpawned.toString()) elSp.innerText = gSpawned;
+    let elAr = document.getElementById('global-stat-arrived');
+    if (elAr && elAr.innerText !== gArrived.toString()) elAr.innerText = gArrived;
+    let elAc = document.getElementById('global-stat-active');
+    if (elAc && elAc.innerText !== gActive.toString()) elAc.innerText = gActive;
 
-let elRet = document.getElementById('global-stat-retained');
-if (elRet) {
-    let retVal = state.globalTokenStats.retained || 0;
-    if (elRet.innerText !== retVal.toString()) elRet.innerText = retVal;
-}
+    let elRet = document.getElementById('global-stat-retained');
+    if (elRet) {
+        let retVal = state.globalTokenStats.retained || 0;
+        if (elRet.innerText !== retVal.toString()) elRet.innerText = retVal;
+    }
 
-let qDrop = document.getElementById('q-dropdown');
-if (qDrop && qDrop.style.display === 'block') {
-    let activeQ = {};
-    for (let lId in partSys) {
-        let pArr = partSys[lId];
-        if (pArr) {
-            for (let i = 0; i < pArr.length; i++) {
-                let qK = parseFloat(pArr[i].tData.q).toFixed(1);
-                if (qK === '0.0') qK = '0.1';
-                activeQ[qK] = (activeQ[qK] || 0) + 1;
+    let qDrop = document.getElementById('q-dropdown');
+    if (qDrop && qDrop.style.display === 'block') {
+        let activeQ = {};
+        for (let lId in partSys) {
+            let pArr = partSys[lId];
+            if (pArr) {
+                for (let i = 0; i < pArr.length; i++) {
+                    let qK = parseFloat(pArr[i].tData.q).toFixed(1);
+                    if (qK === '0.0') qK = '0.1';
+                    activeQ[qK] = (activeQ[qK] || 0) + 1;
+                }
             }
         }
-    }
-    let qItems = [];
-    for (let i = 1; i <= 10; i++) {
-        let k = (i / 10).toFixed(1);
-        let a = activeQ[k] || 0;
-        let p = (state.globalTokenStats.producedByQ && state.globalTokenStats.producedByQ[k]) || 0;
-        if (a > 0 || p > 0) {
-            qItems.push(`<div style="display:flex;justify-content:space-between;font-size:11px;">
+        let qItems = [];
+        for (let i = 1; i <= 10; i++) {
+            let k = (i / 10).toFixed(1);
+            let a = activeQ[k] || 0;
+            let p = (state.globalTokenStats.producedByQ && state.globalTokenStats.producedByQ[k]) || 0;
+            if (a > 0 || p > 0) {
+                qItems.push(`<div style="display:flex;justify-content:space-between;font-size:11px;">
                     <span style="color:#00ffcc">Q: ${k}</span>
                     <span style="color:#e0e6ed">${a} | ${p}</span>
                 </div>`);
+            }
+        }
+        let htmlStr = qItems.length > 0 ? qItems.join('') : '<div style="font-size:10px;color:#aaa;text-align:center;">Пусто</div>';
+        let qCont = document.getElementById('q-stats-content');
+        if (qCont && qCont.innerHTML !== htmlStr) qCont.innerHTML = htmlStr;
+    }
+
+    // Update HTML HUD copies
+    if (window.hudCopies) {
+        for (let i = window.hudCopies.length - 1; i >= 0; i--) {
+            let cp = window.hudCopies[i];
+            let cpd = state.points[cp.pId];
+            if (!cpd || !cp.el.parentElement) {
+                if (cp.el.parentElement) cp.el.remove();
+                window.hudCopies.splice(i, 1);
+                continue;
+            }
+            let pCache = pxP[cp.pId];
+            let cTxt = pCache && pCache.htmlHud ? pCache.htmlHud.querySelector('.hud-content').innerText : "";
+            let cEl = cp.el.querySelector('.hud-content-copy');
+            if (cEl && cEl.innerText !== cTxt) cEl.innerText = cTxt;
+
+            let ptb = cp.el.querySelector('.hud-btn-pause-pt');
+            if (ptb) { ptb.innerText = cpd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = cpd.paused ? '#2ecc71' : '#ffa500'; }
+            let plb = cp.el.querySelector('.hud-btn-pause-line');
+            if (plb) { plb.innerText = cpd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = cpd.linesPaused ? '#2ecc71' : '#ffa500'; }
+
+            if (cp.el._laserOn) {
+                let rect = cp.el.getBoundingClientRect();
+                let sc = worldContainer.scale.x;
+                let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+                let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+                window.laserGrp.lineStyle(2, 0xff0066, 0.8);
+                let cx = cpd._renderedX != null ? cpd._renderedX : (cpd.x || 0);
+                let cy = cpd._renderedY != null ? cpd._renderedY : (cpd.y || 0);
+                window.laserGrp.moveTo(cx, cy);
+                window.laserGrp.lineTo(wx, wy);
+            }
         }
     }
-    let htmlStr = qItems.length > 0 ? qItems.join('') : '<div style="font-size:10px;color:#aaa;text-align:center;">Пусто</div>';
-    let qCont = document.getElementById('q-stats-content');
-    if (qCont && qCont.innerHTML !== htmlStr) qCont.innerHTML = htmlStr;
 }
-
-// Update HTML HUD copies
-if (window.hudCopies) {
-    for (let i = window.hudCopies.length - 1; i >= 0; i--) {
-        let cp = window.hudCopies[i];
-        let cpd = state.points[cp.pId];
-        if (!cpd || !cp.el.parentElement) {
-            if (cp.el.parentElement) cp.el.remove();
-            window.hudCopies.splice(i, 1);
-            continue;
-        }
-        let pCache = pxP[cp.pId];
-        let cTxt = pCache && pCache.htmlHud ? pCache.htmlHud.querySelector('.hud-content').innerText : "";
-        let cEl = cp.el.querySelector('.hud-content-copy');
-        if (cEl && cEl.innerText !== cTxt) cEl.innerText = cTxt;
-
-        let ptb = cp.el.querySelector('.hud-btn-pause-pt');
-        if (ptb) { ptb.innerText = cpd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = cpd.paused ? '#2ecc71' : '#ffa500'; }
-        let plb = cp.el.querySelector('.hud-btn-pause-line');
-        if (plb) { plb.innerText = cpd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = cpd.linesPaused ? '#2ecc71' : '#ffa500'; }
-
-        if (cp.el._laserOn) {
-            let rect = cp.el.getBoundingClientRect();
-            let sc = worldContainer.scale.x;
-            let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
-            let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
-            window.laserGrp.lineStyle(2, 0xff0066, 0.8);
-            let cx = cpd._renderedX != null ? cpd._renderedX : (cpd.x || 0);
-            let cy = cpd._renderedY != null ? cpd._renderedY : (cpd.y || 0);
-            window.laserGrp.moveTo(cx, cy);
-            window.laserGrp.lineTo(wx, wy);
-        }
-    }
-}
-
 
 // Drag state
 document.addEventListener('mousemove', e => {
@@ -2463,6 +2479,7 @@ if (blBtn) blBtn.onclick = () => { linkingMode = !linkingMode; linkingSourcePoin
 // Main loop
 function queueRender() { needsRender = true; if (!app.ticker.started) app.ticker.start(); }
 app.ticker.add(delta => {
+    let deltaTimeMs = app.ticker.deltaMS || 16.666;
     let hasP = false; for (let id in partSys) { if (partSys[id] && partSys[id].length > 0) { hasP = true; break; } }
     let hasAnim = false;
     let isSolidMode = state.animationMode === 'solid';
@@ -2530,10 +2547,10 @@ app.ticker.add(delta => {
     }
 
     if (needsRender || isAnimActive) {
-        if (state.animationMode === 'play') animTime += delta;
+        if (state.animationMode === 'play') animTime += (deltaTimeMs / 1000);
         let fr = needsRender;
         if (fr) { renderBubbles(); renderMinis(); renderPoints(); }
-        renderLinks(fr);
+        renderLinks(fr, deltaTimeMs);
         renderMinimap();
         needsRender = false;
 
