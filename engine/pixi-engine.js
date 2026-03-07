@@ -220,6 +220,13 @@ window.setBubbleState = (s) => {
     if (!state.minis) state.minis = {};
     if (!state.links) state.links = {};
     if (!state.points) state.points = {};
+
+    // Complete history reset based on newly loaded data
+    if (typeof stateHistory !== 'undefined') {
+        stateHistory = [JSON.parse(JSON.stringify(state))];
+        historyIndex = 0;
+        if (typeof updateHB === 'function') updateHB();
+    }
 };
 
 // Migrate links
@@ -1950,23 +1957,28 @@ function renderPoints() {
             if (lyr) lyr.appendChild(htmlHud);
 
             // Bind events for buttons
-            htmlHud.querySelector('.hud-btn-laser').onpointerdown = e => { e.stopPropagation(); pd.laserOn = !pd.laserOn; e.target.style.opacity = pd.laserOn ? "1" : "0.5"; queueRender(); };
-            htmlHud.querySelector('.hud-btn-pin').onpointerdown = e => { e.stopPropagation(); pd.pinned = !pd.pinned; queueRender(); };
+            htmlHud.querySelector('.hud-btn-laser').onpointerdown = e => { e.stopPropagation(); let pt = state.points[pId]; if (pt) { pt.laserOn = !pt.laserOn; e.target.style.opacity = pt.laserOn ? "1" : "0.5"; queueRender(); } };
+            htmlHud.querySelector('.hud-btn-pin').onpointerdown = e => { e.stopPropagation(); let pt = state.points[pId]; if (pt) { pt.pinned = !pt.pinned; queueRender(); } };
             htmlHud.querySelector('.hud-btn-magnet').onpointerdown = e => {
                 e.stopPropagation();
-                pd.hudDetached = !pd.hudDetached;
-                if (pd.hudDetached) {
-                    pd.hudX = pd.x; pd.hudY = pd.y; // lock to current world pos
+                let pt = state.points[pId];
+                if (!pt) return;
+                pt.hudDetached = !pt.hudDetached;
+                if (pt.hudDetached) {
+                    pt.hudX = pt.x; pt.hudY = pt.y; // lock to current world pos
                 }
                 queueRender();
             };
-            htmlHud.querySelector('.hud-btn-pause-pt').onpointerdown = e => { e.stopPropagation(); pd.paused = !pd.paused; queueRender(); };
+            htmlHud.querySelector('.hud-btn-pause-pt').onpointerdown = e => { e.stopPropagation(); let pt = state.points[pId]; if (pt) { pt.paused = !pt.paused; queueRender(); } };
             htmlHud.querySelector('.hud-btn-pause-line').onpointerdown = e => {
-                e.stopPropagation(); pd.linesPaused = !pd.linesPaused;
+                e.stopPropagation();
+                let pt = state.points[pId];
+                if (!pt) return;
+                pt.linesPaused = !pt.linesPaused;
                 Object.values(state.links).forEach(l => {
                     if (!l) return;
-                    if (l.from === pId || l.waypoints?.includes(pId)) l.l1Paused = pd.linesPaused;
-                    if (l.to === pId || l.waypoints?.includes(pId)) l.l2Paused = pd.linesPaused;
+                    if (l.from === pId || l.waypoints?.includes(pId)) l.l1Paused = pt.linesPaused;
+                    if (l.to === pId || l.waypoints?.includes(pId)) l.l2Paused = pt.linesPaused;
                 });
                 queueRender();
             };
@@ -1976,7 +1988,8 @@ function renderPoints() {
             };
             htmlHud.querySelector('.hud-btn-fly').onpointerdown = e => {
                 e.stopPropagation();
-                if (window.flyToPoint) window.flyToPoint(pd.x, pd.y);
+                let pt = state.points[pId];
+                if (pt && window.flyToPoint) window.flyToPoint(pt.x, pt.y);
             };
 
             // Draggability for the HTML HUD itself
@@ -1988,234 +2001,244 @@ function renderPoints() {
                     return;
                 }
                 e.stopPropagation();
+                let pt = state.points[pId];
+                if (!pt) return;
                 isDraggingHud = true;
-                pd.hudDetached = true;
+                pt.hudDetached = true;
                 let sc = worldContainer.scale.x;
-                pd.hudX = pd.hudX || pd.x || 0; pd.hudY = pd.hudY || pd.y || 0;
-                hudDragDX = (e.clientX - worldContainer.x) / sc - pd.hudX;
-                hudDragDY = (e.clientY - worldContainer.y) / sc - pd.hudY;
+                pt.hudX = pt.hudX || pt.x || 0; pt.hudY = pt.hudY || pt.y || 0;
+                hudDragDX = (e.clientX - worldContainer.x) / sc - pt.hudX;
+                hudDragDY = (e.clientY - worldContainer.y) / sc - pt.hudY;
                 htmlHud.setPointerCapture(e.pointerId);
             };
             htmlHud.onpointermove = e => {
                 if (!isDraggingHud) return;
+                let pt = state.points[pId];
+                if (!pt) return;
                 let sc = worldContainer.scale.x;
-                pd.hudX = (e.clientX - worldContainer.x) / sc - hudDragDX;
-                pd.hudY = (e.clientY - worldContainer.y) / sc - hudDragDY;
+                pt.hudX = (e.clientX - worldContainer.x) / sc - hudDragDX;
+                pt.hudY = (e.clientY - worldContainer.y) / sc - hudDragDY;
                 queueRender();
             };
-            htmlHud.onpointerup = htmlHud.onpointercancel = e => {
-                isDraggingHud = false; htmlHud.releasePointerCapture(e.pointerId);
-            };
+            queueRender();
+        };
+        htmlHud.onpointerup = htmlHud.onpointercancel = e => {
+            isDraggingHud = false; htmlHud.releasePointerCapture(e.pointerId);
+        };
 
-            ctn.addChild(g);
-            cache = { ctn, g, htmlHud }; pxP[pId] = cache;
+        ctn.addChild(g);
+        cache = { ctn, g, htmlHud }; pxP[pId] = cache;
 
-            g.on('pointerdown', e => {
-                // If we clicked on the HTML HUD, don't let Pixi capture it
-                let ev = e.data && e.data.originalEvent;
-                if (ev && ev.target && (ev.target.closest('.point-html-hud') || ev.target.className.includes('hud-btn'))) {
-                    return; // Ignore completely
+        g.on('pointerdown', e => {
+            // If we clicked on the HTML HUD, don't let Pixi capture it
+            let ev = e.data && e.data.originalEvent;
+            if (ev && ev.target && (ev.target.closest('.point-html-hud') || ev.target.className.includes('hud-btn'))) {
+                return; // Ignore completely
+            }
+
+            e.stopPropagation();
+            if (ctxMenu) ctxMenu.style.display = 'none';
+            if (linkingMode) { handleLinking(pId); return; }
+            if (lineCreationMode) { handleLineSeqClick(pId); return; }
+
+            // If it's a left click, select the point to keep HUD open and start dragging
+            if (e.button === 0) {
+                selectedPointId = pId;
+                dragState = { type: 'point', id: pId, isNew: true, sX: e.global.x, sY: e.global.y };
+            }
+            queueRender();
+        });
+        g.on('rightclick', e => { e.stopPropagation(); openRPM(pId, { clientX: e.global.x, clientY: e.global.y }); });
+        g.on('pointerover', e => { hoveredPointId = pId; queueRender(); });
+        g.on('pointerout', e => { if (hoveredPointId === pId) { hoveredPointId = null; queueRender(); } });
+    }
+
+    let pd = state.points[pId]; // grab the most up to date reference per render loop
+    if (!pd) return;
+
+    let cx = pd._renderedX != null ? pd._renderedX : (pd.x || 0), cy = pd._renderedY != null ? pd._renderedY : (pd.y || 0);
+    let isLinkSel = false, isLinkHov = false;
+    Object.values(state.links).forEach(l => { if (!l) return; if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) { if (selectedEntity && selectedEntity.type === 'link' && selectedEntity.id === l.id) isLinkSel = true; if (hoveredLinkId === l.id) isLinkHov = true; } });
+    let isDr = dragState && dragState.id === pId;
+    let isSelPt = selectedPointId === pId;
+
+    let isPinnedVisible = pd.pinned && !window.globalHidePinnedHuds;
+    let show = window.globalShowAllHuds || linkingMode || isLinkSel || isLinkHov || isDr || pId === linkingSourcePointId || hoveredPointId === pId || isSelPt || isPinnedVisible;
+
+    cache.g.clear();
+    if (show) {
+        let col = isSelPt ? 0xff0066 : (u > 1 ? 0xf39c12 : 0x2ecc71);
+        cache.g.beginFill(0, 0.001); cache.g.drawCircle(0, 0, 16); cache.g.endFill();
+        cache.g.beginFill(col, 1); cache.g.drawCircle(0, 0, 8); cache.g.endFill();
+        cache.g.lineStyle(2, 0xffffff, 1); cache.g.drawCircle(0, 0, 8);
+    }
+    cache.ctn.position.set(cx, cy);
+    cache.g.eventMode = show ? 'static' : 'none';
+    cache.ctn.visible = show;
+
+    let showHud = window.globalShowAllHuds || hoveredPointId === pId || isSelPt || isPinnedVisible;
+    if (showHud) {
+        let st = pd.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+        let linesInfo = '';
+        let pLinks = [];
+        Object.values(state.links).forEach(l => {
+            if (!l) return;
+            if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) pLinks.push(l);
+        });
+        if (pLinks.length > 0) {
+            pLinks.forEach((l, idx) => {
+                let lj = idx + 1; // 1-based index
+                let hasDirStats = false;
+                let lineTxt = '';
+
+                let sf = st.spawnDir ? (st.spawnDir[l.id + '_fwd'] || 0) : 0;
+                let sb = st.spawnDir ? (st.spawnDir[l.id + '_bwd'] || 0) : 0;
+                let pf = st.passDir ? (st.passDir[l.id + '_fwd'] || 0) : 0;
+                let pb = st.passDir ? (st.passDir[l.id + '_bwd'] || 0) : 0;
+                let af = st.arriveDir ? (st.arriveDir[l.id + '_fwd'] || 0) : 0;
+                let ab = st.arriveDir ? (st.arriveDir[l.id + '_bwd'] || 0) : 0;
+
+                if (l.from === pId) { lineTxt += `${lj} ==> отпущено: ${sf}\n`; hasDirStats = true; }
+                if (l.to === pId && l.lineMode === 'double') { lineTxt += `${lj} <== отпущено: ${sb}\n`; hasDirStats = true; }
+
+                if (l.waypoints && l.waypoints.includes(pId)) {
+                    lineTxt += `=${lj}=> пройдено: ${pf}\n`;
+                    if (l.lineMode === 'double') lineTxt += `<=${lj}= пройдено: ${pb}\n`;
+                    hasDirStats = true;
                 }
 
-                e.stopPropagation();
-                if (ctxMenu) ctxMenu.style.display = 'none';
-                if (linkingMode) { handleLinking(pId); return; }
-                if (lineCreationMode) { handleLineSeqClick(pId); return; }
+                if (l.to === pId) { lineTxt += `${lj} ==> принято: ${af}\n`; hasDirStats = true; }
+                if (l.from === pId && l.lineMode === 'double') { lineTxt += `${lj} <== принято: ${ab}\n`; hasDirStats = true; }
 
-                // If it's a left click, select the point to keep HUD open and start dragging
-                if (e.button === 0) {
-                    selectedPointId = pId;
-                    dragState = { type: 'point', id: pId, isNew: true, sX: e.global.x, sY: e.global.y };
-                }
-                queueRender();
+                if (hasDirStats) linesInfo += lineTxt;
             });
-            g.on('rightclick', e => { e.stopPropagation(); openRPM(pId, { clientX: e.global.x, clientY: e.global.y }); });
-            g.on('pointerover', e => { hoveredPointId = pId; queueRender(); });
-            g.on('pointerout', e => { if (hoveredPointId === pId) { hoveredPointId = null; queueRender(); } });
-        }
-        let cx = pd._renderedX != null ? pd._renderedX : (pd.x || 0), cy = pd._renderedY != null ? pd._renderedY : (pd.y || 0);
-        let isLinkSel = false, isLinkHov = false;
-        Object.values(state.links).forEach(l => { if (!l) return; if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) { if (selectedEntity && selectedEntity.type === 'link' && selectedEntity.id === l.id) isLinkSel = true; if (hoveredLinkId === l.id) isLinkHov = true; } });
-        let isDr = dragState && dragState.id === pId;
-        let isSelPt = selectedPointId === pId;
-
-        let isPinnedVisible = pd.pinned && !window.globalHidePinnedHuds;
-        let show = window.globalShowAllHuds || linkingMode || isLinkSel || isLinkHov || isDr || pId === linkingSourcePointId || hoveredPointId === pId || isSelPt || isPinnedVisible;
-
-        cache.g.clear();
-        if (show) {
-            let col = isSelPt ? 0xff0066 : (u > 1 ? 0xf39c12 : 0x2ecc71);
-            cache.g.beginFill(0, 0.001); cache.g.drawCircle(0, 0, 16); cache.g.endFill();
-            cache.g.beginFill(col, 1); cache.g.drawCircle(0, 0, 8); cache.g.endFill();
-            cache.g.lineStyle(2, 0xffffff, 1); cache.g.drawCircle(0, 0, 8);
-        }
-        cache.ctn.position.set(cx, cy);
-        cache.g.eventMode = show ? 'static' : 'none';
-        cache.ctn.visible = show;
-
-        let showHud = window.globalShowAllHuds || hoveredPointId === pId || isSelPt || isPinnedVisible;
-        if (showHud) {
-            let st = pd.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
-            let linesInfo = '';
-            let pLinks = [];
-            Object.values(state.links).forEach(l => {
-                if (!l) return;
-                if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) pLinks.push(l);
-            });
-            if (pLinks.length > 0) {
-                pLinks.forEach((l, idx) => {
-                    let lj = idx + 1; // 1-based index
-                    let hasDirStats = false;
-                    let lineTxt = '';
-
-                    let sf = st.spawnDir ? (st.spawnDir[l.id + '_fwd'] || 0) : 0;
-                    let sb = st.spawnDir ? (st.spawnDir[l.id + '_bwd'] || 0) : 0;
-                    let pf = st.passDir ? (st.passDir[l.id + '_fwd'] || 0) : 0;
-                    let pb = st.passDir ? (st.passDir[l.id + '_bwd'] || 0) : 0;
-                    let af = st.arriveDir ? (st.arriveDir[l.id + '_fwd'] || 0) : 0;
-                    let ab = st.arriveDir ? (st.arriveDir[l.id + '_bwd'] || 0) : 0;
-
-                    if (l.from === pId) { lineTxt += `${lj} ==> отпущено: ${sf}\n`; hasDirStats = true; }
-                    if (l.to === pId && l.lineMode === 'double') { lineTxt += `${lj} <== отпущено: ${sb}\n`; hasDirStats = true; }
-
-                    if (l.waypoints && l.waypoints.includes(pId)) {
-                        lineTxt += `=${lj}=> пройдено: ${pf}\n`;
-                        if (l.lineMode === 'double') lineTxt += `<=${lj}= пройдено: ${pb}\n`;
-                        hasDirStats = true;
-                    }
-
-                    if (l.to === pId) { lineTxt += `${lj} ==> принято: ${af}\n`; hasDirStats = true; }
-                    if (l.from === pId && l.lineMode === 'double') { lineTxt += `${lj} <== принято: ${ab}\n`; hasDirStats = true; }
-
-                    if (hasDirStats) linesInfo += lineTxt;
-                });
-            } else {
-                linesInfo += `Точка без связей\n`;
-            }
-
-            let symTxt = '';
-            for (let s in st.bySym) {
-                if (st.bySym[s] > 0) symTxt += `${s}:${st.bySym[s]} `;
-            }
-            if (symTxt) linesInfo += `(${symTxt})\n`;
-
-            let finalTxt = linesInfo.trim();
-            let cContent = cache.htmlHud.querySelector('.hud-content');
-            if (cContent.innerText !== finalTxt) {
-                cContent.innerText = finalTxt;
-                cache.htmlHud.querySelector('.hud-btn-pin').innerText = pd.pinned ? '📍' : '📌';
-                cache.htmlHud.querySelector('.hud-btn-magnet').innerText = pd.hudDetached ? '🚫🧲' : '🧲';
-                let ptb = cache.htmlHud.querySelector('.hud-btn-pause-pt'); ptb.innerText = pd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = pd.paused ? '#2ecc71' : '#ffa500';
-                let plb = cache.htmlHud.querySelector('.hud-btn-pause-line'); plb.innerText = pd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = pd.linesPaused ? '#2ecc71' : '#ffa500';
-            }
-            cache.htmlHud.style.display = 'block';
-            let hx = pd.hudDetached ? (pd.hudX != null ? pd.hudX : cx) : cx + 20;
-            let hy = pd.hudDetached ? (pd.hudY != null ? pd.hudY : cy) : cy - 20;
-            cache.htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
-            if (pd.hudX == null) pd.hudX = cx;
-            if (pd.hudY == null) pd.hudY = cy;
-
-            if (pd.hudDetached && pd.laserOn) {
-                let rect = cache.htmlHud.getBoundingClientRect();
-                let sc = worldContainer.scale.x;
-                let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
-                let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
-                window.laserGrp.lineStyle(2, 0x00ffcc, 0.8);
-                window.laserGrp.moveTo(cx, cy);
-                window.laserGrp.lineTo(wx, wy);
-            }
-
-            // Bring to front
-            layerPts.setChildIndex(cache.ctn, layerPts.children.length - 1);
         } else {
-            cache.htmlHud.style.display = 'none';
+            linesInfo += `Точка без связей\n`;
         }
-    }
 
-    // Update global point stats
-    let gSpawned = 0, gArrived = 0, gActive = 0;
-    for (let id in state.points) {
-        let s = state.points[id].stats;
-        if (s) { gSpawned += (s.spawned || 0); gArrived += (s.arrived || 0); }
-    }
-    gActive = gSpawned - gArrived;
-    let elSp = document.getElementById('global-stat-spawned');
-    if (elSp && elSp.innerText !== gSpawned.toString()) elSp.innerText = gSpawned;
-    let elAr = document.getElementById('global-stat-arrived');
-    if (elAr && elAr.innerText !== gArrived.toString()) elAr.innerText = gArrived;
-    let elAc = document.getElementById('global-stat-active');
-    if (elAc && elAc.innerText !== gActive.toString()) elAc.innerText = gActive;
+        let symTxt = '';
+        for (let s in st.bySym) {
+            if (st.bySym[s] > 0) symTxt += `${s}:${st.bySym[s]} `;
+        }
+        if (symTxt) linesInfo += `(${symTxt})\n`;
 
-    let elRet = document.getElementById('global-stat-retained');
-    if (elRet) {
-        let retVal = state.globalTokenStats.retained || 0;
-        if (elRet.innerText !== retVal.toString()) elRet.innerText = retVal;
-    }
+        let finalTxt = linesInfo.trim();
+        let cContent = cache.htmlHud.querySelector('.hud-content');
+        if (cContent.innerText !== finalTxt) {
+            cContent.innerText = finalTxt;
+            cache.htmlHud.querySelector('.hud-btn-pin').innerText = pd.pinned ? '📍' : '📌';
+            cache.htmlHud.querySelector('.hud-btn-magnet').innerText = pd.hudDetached ? '🚫🧲' : '🧲';
+            let ptb = cache.htmlHud.querySelector('.hud-btn-pause-pt'); ptb.innerText = pd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = pd.paused ? '#2ecc71' : '#ffa500';
+            let plb = cache.htmlHud.querySelector('.hud-btn-pause-line'); plb.innerText = pd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = pd.linesPaused ? '#2ecc71' : '#ffa500';
+        }
+        cache.htmlHud.style.display = 'block';
+        let hx = pd.hudDetached ? (pd.hudX != null ? pd.hudX : cx) : cx + 20;
+        let hy = pd.hudDetached ? (pd.hudY != null ? pd.hudY : cy) : cy - 20;
+        cache.htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
+        if (pd.hudX == null) pd.hudX = cx;
+        if (pd.hudY == null) pd.hudY = cy;
 
-    let qDrop = document.getElementById('q-dropdown');
-    if (qDrop && qDrop.style.display === 'block') {
-        let activeQ = {};
-        for (let lId in partSys) {
-            let pArr = partSys[lId];
-            if (pArr) {
-                for (let i = 0; i < pArr.length; i++) {
-                    let qK = parseFloat(pArr[i].tData.q).toFixed(1);
-                    if (qK === '0.0') qK = '0.1';
-                    activeQ[qK] = (activeQ[qK] || 0) + 1;
-                }
+        if (pd.hudDetached && pd.laserOn) {
+            let rect = cache.htmlHud.getBoundingClientRect();
+            let sc = worldContainer.scale.x;
+            let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+            let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+            window.laserGrp.lineStyle(2, 0x00ffcc, 0.8);
+            window.laserGrp.moveTo(cx, cy);
+            window.laserGrp.lineTo(wx, wy);
+        }
+
+        // Bring to front
+        layerPts.setChildIndex(cache.ctn, layerPts.children.length - 1);
+    } else {
+        cache.htmlHud.style.display = 'none';
+    }
+}
+
+// Update global point stats
+let gSpawned = 0, gArrived = 0, gActive = 0;
+for (let id in state.points) {
+    let s = state.points[id].stats;
+    if (s) { gSpawned += (s.spawned || 0); gArrived += (s.arrived || 0); }
+}
+gActive = gSpawned - gArrived;
+let elSp = document.getElementById('global-stat-spawned');
+if (elSp && elSp.innerText !== gSpawned.toString()) elSp.innerText = gSpawned;
+let elAr = document.getElementById('global-stat-arrived');
+if (elAr && elAr.innerText !== gArrived.toString()) elAr.innerText = gArrived;
+let elAc = document.getElementById('global-stat-active');
+if (elAc && elAc.innerText !== gActive.toString()) elAc.innerText = gActive;
+
+let elRet = document.getElementById('global-stat-retained');
+if (elRet) {
+    let retVal = state.globalTokenStats.retained || 0;
+    if (elRet.innerText !== retVal.toString()) elRet.innerText = retVal;
+}
+
+let qDrop = document.getElementById('q-dropdown');
+if (qDrop && qDrop.style.display === 'block') {
+    let activeQ = {};
+    for (let lId in partSys) {
+        let pArr = partSys[lId];
+        if (pArr) {
+            for (let i = 0; i < pArr.length; i++) {
+                let qK = parseFloat(pArr[i].tData.q).toFixed(1);
+                if (qK === '0.0') qK = '0.1';
+                activeQ[qK] = (activeQ[qK] || 0) + 1;
             }
         }
-        let qItems = [];
-        for (let i = 1; i <= 10; i++) {
-            let k = (i / 10).toFixed(1);
-            let a = activeQ[k] || 0;
-            let p = (state.globalTokenStats.producedByQ && state.globalTokenStats.producedByQ[k]) || 0;
-            if (a > 0 || p > 0) {
-                qItems.push(`<div style="display:flex;justify-content:space-between;font-size:11px;">
+    }
+    let qItems = [];
+    for (let i = 1; i <= 10; i++) {
+        let k = (i / 10).toFixed(1);
+        let a = activeQ[k] || 0;
+        let p = (state.globalTokenStats.producedByQ && state.globalTokenStats.producedByQ[k]) || 0;
+        if (a > 0 || p > 0) {
+            qItems.push(`<div style="display:flex;justify-content:space-between;font-size:11px;">
                     <span style="color:#00ffcc">Q: ${k}</span>
                     <span style="color:#e0e6ed">${a} | ${p}</span>
                 </div>`);
-            }
         }
-        let htmlStr = qItems.length > 0 ? qItems.join('') : '<div style="font-size:10px;color:#aaa;text-align:center;">Пусто</div>';
-        let qCont = document.getElementById('q-stats-content');
-        if (qCont && qCont.innerHTML !== htmlStr) qCont.innerHTML = htmlStr;
     }
+    let htmlStr = qItems.length > 0 ? qItems.join('') : '<div style="font-size:10px;color:#aaa;text-align:center;">Пусто</div>';
+    let qCont = document.getElementById('q-stats-content');
+    if (qCont && qCont.innerHTML !== htmlStr) qCont.innerHTML = htmlStr;
+}
 
-    // Update HTML HUD copies
-    if (window.hudCopies) {
-        for (let i = window.hudCopies.length - 1; i >= 0; i--) {
-            let cp = window.hudCopies[i];
-            let cpd = state.points[cp.pId];
-            if (!cpd || !cp.el.parentElement) {
-                if (cp.el.parentElement) cp.el.remove();
-                window.hudCopies.splice(i, 1);
-                continue;
-            }
-            let pCache = pxP[cp.pId];
-            let cTxt = pCache && pCache.htmlHud ? pCache.htmlHud.querySelector('.hud-content').innerText : "";
-            let cEl = cp.el.querySelector('.hud-content-copy');
-            if (cEl && cEl.innerText !== cTxt) cEl.innerText = cTxt;
+// Update HTML HUD copies
+if (window.hudCopies) {
+    for (let i = window.hudCopies.length - 1; i >= 0; i--) {
+        let cp = window.hudCopies[i];
+        let cpd = state.points[cp.pId];
+        if (!cpd || !cp.el.parentElement) {
+            if (cp.el.parentElement) cp.el.remove();
+            window.hudCopies.splice(i, 1);
+            continue;
+        }
+        let pCache = pxP[cp.pId];
+        let cTxt = pCache && pCache.htmlHud ? pCache.htmlHud.querySelector('.hud-content').innerText : "";
+        let cEl = cp.el.querySelector('.hud-content-copy');
+        if (cEl && cEl.innerText !== cTxt) cEl.innerText = cTxt;
 
-            let ptb = cp.el.querySelector('.hud-btn-pause-pt');
-            if (ptb) { ptb.innerText = cpd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = cpd.paused ? '#2ecc71' : '#ffa500'; }
-            let plb = cp.el.querySelector('.hud-btn-pause-line');
-            if (plb) { plb.innerText = cpd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = cpd.linesPaused ? '#2ecc71' : '#ffa500'; }
+        let ptb = cp.el.querySelector('.hud-btn-pause-pt');
+        if (ptb) { ptb.innerText = cpd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = cpd.paused ? '#2ecc71' : '#ffa500'; }
+        let plb = cp.el.querySelector('.hud-btn-pause-line');
+        if (plb) { plb.innerText = cpd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = cpd.linesPaused ? '#2ecc71' : '#ffa500'; }
 
-            if (cp.el._laserOn) {
-                let rect = cp.el.getBoundingClientRect();
-                let sc = worldContainer.scale.x;
-                let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
-                let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
-                window.laserGrp.lineStyle(2, 0xff0066, 0.8);
-                let cx = cpd._renderedX != null ? cpd._renderedX : (cpd.x || 0);
-                let cy = cpd._renderedY != null ? cpd._renderedY : (cpd.y || 0);
-                window.laserGrp.moveTo(cx, cy);
-                window.laserGrp.lineTo(wx, wy);
-            }
+        if (cp.el._laserOn) {
+            let rect = cp.el.getBoundingClientRect();
+            let sc = worldContainer.scale.x;
+            let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+            let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+            window.laserGrp.lineStyle(2, 0xff0066, 0.8);
+            let cx = cpd._renderedX != null ? cpd._renderedX : (cpd.x || 0);
+            let cy = cpd._renderedY != null ? cpd._renderedY : (cpd.y || 0);
+            window.laserGrp.moveTo(cx, cy);
+            window.laserGrp.lineTo(wx, wy);
         }
     }
 }
+
 
 // Drag state
 document.addEventListener('mousemove', e => {
@@ -2280,7 +2303,11 @@ document.addEventListener('mousemove', e => {
         if (dist > 5 && state.links[dragState.linkId]) {
             let mp = getMapPt({ global: { x: dragState.sX, y: dragState.sY } });
             let pId = 'p_' + generateId(); state.points[pId] = { x: mp.x, y: mp.y, attachedTo: null, angle: null };
-            state.links[dragState.linkId].waypoints.splice(dragState.insertIdx, 0, pId); let old = dragState.linkId; dragState = { type: 'point', id: pId, isNew: false, sX: dragState.sX, sY: dragState.sY }; selectEntity('link', old);
+            state.links[dragState.linkId].waypoints.splice(dragState.insertIdx, 0, pId);
+            let old = dragState.linkId;
+            dragState = { type: 'point', id: pId, isNew: false, sX: dragState.sX, sY: dragState.sY };
+            selectEntity('link', old);
+            selectedPointId = pId; // Keep context focus on the new point
         }
     }
     if (dragState.type === 'point' && state.points[dragState.id]) {
