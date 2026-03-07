@@ -6,7 +6,7 @@
 <title>Component Generator v2</title>
 <script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="supabase-config.js"></script>
+<script src="../supabase-config.js"></script>
 <style>
 :root{--p:#8B5CF6;--ph:#7C3AED;--bg:#f9fafb;--bgw:#fff;--bd:#e5e7eb;--tx:#1f2937;--mu:#6b7280;--ok:#22c55e;--er:#ef4444;--bl:#3b82f6;--blh:#2563eb;--rs:22px;}
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -185,6 +185,7 @@ i[data-lucide]{width:15px;height:15px;stroke-width:2;}
   <button data-tab="3" class="tb"><i data-lucide="settings-2"></i> 3. Сборка</button>
   <button data-tab="4" class="tb"><i data-lucide="layout"></i> 4. Экспорт</button>
   <button data-tab="5" class="tb"><i data-lucide="layers"></i> 5. Галерея</button>
+  <button data-tab="6" class="tb"><i data-lucide="play-circle"></i> 6. Анимации</button>
   <!-- Cloud bar -->
   <div id="cloud-bar">
     <div id="context-bar">
@@ -338,6 +339,20 @@ i[data-lucide]{width:15px;height:15px;stroke-width:2;}
   <div id="galgrid" class="gg"></div>
 </div>
 
+<!-- TAB 6 -->
+<div id="tab-6" class="tc con" style="display:flex;flex-direction:column;height:100%;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px 8px;flex-shrink:0;">
+    <div>
+      <h2 class="h2" style="margin:0;">🎬 Предпросмотр анимаций</h2>
+      <p class="mu tsm" style="margin-top:3px;">Интерактивный превью со всеми анимациями холста. Изменения со вкладки «Сборка» отображаются автоматически.</p>
+    </div>
+    <button onclick="updTab6Preview()" class="btn btn-b" style="padding:6px 14px;font-size:12px;flex-shrink:0;">
+      <i data-lucide="refresh-cw"></i> Обновить
+    </button>
+  </div>
+  <iframe id="tab6-prev-iframe" style="flex:1;border:none;width:100%;min-height:0;background:#f3f4f6;"></iframe>
+</div>
+
 </div>
 
 <!-- MODAL: Edit Element -->
@@ -481,6 +496,7 @@ window.switchTab=function(id){
   if(id==='3'){renderPal();renderCanvas();renderDom();updAnimBtn();updPreview();}
   if(id==='4')renderT4();
   if(id==='5')renderGal();
+  if(id==='6')updTab6Preview();
 };
 document.querySelectorAll('.tb').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
 
@@ -1504,14 +1520,27 @@ window.dropSet = function() {
   switchTab('3');
 };
 
-// ─── INIT ─────────────────────────────────────────────────────
+// ─── TAB 6: ANIMATION PREVIEW (fullscreen) ────────────────────
+function updTab6Preview(){
+  const ifr=document.getElementById('tab6-prev-iframe');
+  if(!ifr)return;
+  if(S.items.length===0&&S.connections.length===0){
+    ifr.srcdoc='<div style="padding:40px;text-align:center;color:#9ca3af;font-family:sans-serif;font-size:14px;">Холст пуст — перейдите на вкладку «Сборка» и добавьте элементы</div>';
+    return;
+  }
+  const{fullHTML}=buildExport(S.items,S.connections);
+  ifr.srcdoc=fullHTML;
+  if(typeof lucide!=='undefined')lucide.createIcons();
+}
+
+// ─── INIT ────────────────────────────────────────────────────
 buildRulers();
 renderUI();
 renderSets();
 // Auto-switch to tab from URL param ?tab=N
 (function(){
   const t=new URLSearchParams(location.search).get('tab');
-  if(t&&['1','2','3','4','5'].includes(t))switchTab(t);
+  if(t&&['1','2','3','4','5','6'].includes(t))switchTab(t);
 })();
 // Embed mode: hide cloud controls when loaded inside workspace iframe
 (function(){

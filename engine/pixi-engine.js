@@ -24,7 +24,7 @@ let currentPinInput = '';
 let activeUserForPin = null;
 
 // External auth hook — called by workspace_engine.js after Supabase login
-window._bubbleSetUser = function(user) {
+window._bubbleSetUser = function (user) {
     currentUser = user;
     let tbl = document.getElementById('toolbar');
     let mhd = document.getElementById('minimap-hud');
@@ -204,13 +204,23 @@ window.addEventListener('pointermove', e => {
 
 let state = window.APP_STATE || { bubbles: {}, minis: {}, links: {}, points: {} };
 if (!state.globalAnimConfig) state.globalAnimConfig = { mode: 'pixi_dash', shape: 'drop', size: 1, count: 1, wobble: 0, emojis: '❤️⭐✨', hideLines: false, ecoMode: false, hasGlow: true };
+if (!state.globalTokenStats) state.globalTokenStats = { retained: 0, producedByQ: {} };
 if (state.animationMode === undefined) state.animationMode = 'play';
 if (!state.cgData) state.cgData = {}; // CG workspaces per bubble
 let defaultLP = { type: 'sharp', lineMode: 'single', color: '#00ffcc' };
 if (!state.points) state.points = {}; if (!state.bubbles) state.bubbles = {}; if (!state.minis) state.minis = {};
 // Expose state access for workspace_engine.js
 window.getBubbleState = () => state;
-window.setBubbleState = (s) => { state = s; if (!state.cgData) state.cgData = {}; if (!state.globalAnimConfig) state.globalAnimConfig = { mode:'pixi_dash', shape:'drop', size:1, count:1, wobble:0, emojis:'❤️⭐✨', hideLines:false, ecoMode:false, hasGlow:true }; if (!state.bubbles) state.bubbles={}; if (!state.minis) state.minis={}; if (!state.links) state.links={}; if (!state.points) state.points={}; };
+window.setBubbleState = (s) => {
+    state = s;
+    if (!state.cgData) state.cgData = {};
+    if (!state.globalAnimConfig) state.globalAnimConfig = { mode: 'pixi_dash', shape: 'drop', size: 1, count: 1, wobble: 0, emojis: '❤️⭐✨', hideLines: false, ecoMode: false, hasGlow: true };
+    if (!state.globalTokenStats) state.globalTokenStats = { retained: 0, producedByQ: {} };
+    if (!state.bubbles) state.bubbles = {};
+    if (!state.minis) state.minis = {};
+    if (!state.links) state.links = {};
+    if (!state.points) state.points = {};
+};
 
 // Migrate links
 let la = Array.isArray(state.links) ? state.links : Object.values(state.links || {});
@@ -233,8 +243,9 @@ la.forEach(l => {
 });
 state.links = nl;
 
-let selectedEntity = null, linkingMode = false, linkingSourcePointId = null, dragState = null, needsRender = true, hoveredLinkId = null;
+let selectedEntity = null, linkingMode = false, linkingSourcePointId = null, dragState = null, needsRender = true, hoveredLinkId = null, hoveredPointId = null;
 let lineCreationMode = false, currentLineId = null;
+let selectedPointId = null;
 
 // Camera State
 let cam = { x: 0, y: 0, scale: 1, isPanningMMB: false, isPanningEdge: false, panStartX: 0, panStartY: 0, isBounded: true, expL: 0, expR: 0, expT: 0, expB: 0 };
@@ -381,6 +392,93 @@ if (tbDrag && toolbar) {
     });
     document.addEventListener('pointerup', () => { if (isTbDragging) { isTbDragging = false; toolbar.style.transition = 'transform 0.3s'; } });
 }
+
+// Global Stats Bar Drag
+const psbDrag = document.getElementById('psb-drag');
+const psbPanel = document.getElementById('point-stats-bar');
+let isPsbDragging = false, psbStartX = 0, psbStartY = 0, psbInitLeft = 0, psbInitTop = 0;
+if (psbDrag && psbPanel) {
+    psbDrag.addEventListener('pointerdown', e => {
+        isPsbDragging = true; psbStartX = e.clientX; psbStartY = e.clientY;
+        let rect = psbPanel.getBoundingClientRect();
+        psbInitLeft = parseInt(psbPanel.style.left) || rect.left; psbInitTop = parseInt(psbPanel.style.top) || rect.top;
+        if (!psbPanel.style.left) psbPanel.style.left = rect.left + 'px';
+        if (!psbPanel.style.top) psbPanel.style.top = rect.top + 'px';
+        psbPanel.style.right = 'auto'; // Disable right anchoring once dragged
+        e.stopPropagation();
+    });
+    document.addEventListener('pointermove', e => {
+        if (!isPsbDragging) return;
+        psbPanel.style.left = (psbInitLeft + (e.clientX - psbStartX)) + 'px';
+        psbPanel.style.top = Math.max(0, psbInitTop + (e.clientY - psbStartY)) + 'px';
+    });
+    document.addEventListener('pointerup', () => { if (isPsbDragging) isPsbDragging = false; });
+}
+
+const psbCollapse = document.getElementById('psb-collapse');
+const psbContent = document.getElementById('psb-content');
+if (psbCollapse && psbContent) {
+    psbCollapse.onclick = () => {
+        let isCol = psbContent.style.display === 'none';
+        psbContent.style.display = isCol ? 'flex' : 'none';
+        psbCollapse.innerText = isCol ? '▶' : '◀';
+    };
+}
+
+const btnShowAllHuds = document.getElementById('btn-show-all-huds');
+if (btnShowAllHuds) {
+    btnShowAllHuds.onclick = () => {
+        window.globalShowAllHuds = !window.globalShowAllHuds;
+        btnShowAllHuds.style.opacity = window.globalShowAllHuds ? '1' : '0.6';
+        queueRender();
+    };
+}
+
+const btnHidePinnedHuds = document.getElementById('btn-toggle-pinned-huds');
+if (btnHidePinnedHuds) {
+    btnHidePinnedHuds.onclick = () => {
+        window.globalHidePinnedHuds = !window.globalHidePinnedHuds;
+        btnHidePinnedHuds.style.opacity = window.globalHidePinnedHuds ? '0.6' : '1';
+        queueRender();
+    };
+}
+
+const btnClearTokens = document.getElementById('btn-clear-tokens');
+if (btnClearTokens) {
+    btnClearTokens.onclick = () => {
+        // Clear all active tokens from partSys
+        for (let lId in partSys) {
+            let pArr = partSys[lId];
+            if (pArr) {
+                let lCache = pxL[lId];
+                for (let i = 0; i < pArr.length; i++) {
+                    let p = pArr[i];
+                    if (p.sprite) {
+                        p.sprite.visible = false;
+                        if (lCache && lCache.deadSprites && lCache.deadSprites.length < 1000) lCache.deadSprites.push(p.sprite);
+                        else p.sprite.destroy();
+                    }
+                }
+                pArr.length = 0;
+            }
+        }
+
+        // Reset global token statistics
+        window.globalRetainedTokens = 0;
+        window.globalProducedByQ = {};
+
+        // Reset point statistics
+        for (let pId in state.points) {
+            let pt = state.points[pId];
+            if (pt) {
+                pt.stats = { spawned: 0, arrived: 0, passed: 0, bySym: {}, spawnDir: {}, passDir: {}, arriveDir: {} };
+            }
+        }
+
+        queueRender();
+    };
+}
+
 let propsDrag = document.getElementById('prop-title');
 let ppPanel = document.getElementById('properties-panel');
 let isPpDragging = false, ppStartX = 0, ppStartY = 0, ppInitX = 0, ppInitY = 0;
@@ -605,9 +703,9 @@ function gSymTex(sym, r, col) { let rSz = Math.max(4, Math.round(r)); let k = `s
 // Math
 function resolveCollisions(mid, vis = new Set()) { let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid); let mcx = mv.x + mv.size / 2, mcy = mv.y + mv.size / 2, mr = mv.size / 2; for (let id in state.bubbles) { if (id === mid) continue; let t = state.bubbles[id]; if (!t) continue; let tcx = t.x + t.size / 2, tcy = t.y + t.size / 2, tr = t.size / 2, dx = tcx - mcx, dy = tcy - mcy, d = Math.hypot(dx, dy), minD = mr + tr + 20; if (d < minD) { if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); } let a = Math.atan2(dy, dx), p = minD - d; t.x += Math.cos(a) * p; t.y += Math.sin(a) * p; t.x = Math.max(0, Math.min(innerWidth - t.size, t.x)); t.y = Math.max(0, Math.min(innerHeight - t.size, t.y)); resolveCollisions(id, vis); } } }
 
-const _bW = b => b.width  || b.size;
+const _bW = b => b.width || b.size;
 const _bH = b => b.height || b.size;
-function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; let bw=_bW(b),bh=_bH(b); return { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; } if (state.minis[id]) { let m = state.minis[id], bx = 0, by = 0; if (m.parentId && state.bubbles[m.parentId]) { bx = state.bubbles[m.parentId].x; by = state.bubbles[m.parentId].y; } if (m.cgMini) { let mw=m.w||100, mh=m.h||100; return { x: bx + m.x + mw/2, y: by + m.y + mh/2, rect: { width: mw, height: mh } }; } return { x: bx + m.x, y: by + m.y, rect: { width: m.width || 60, height: m.height || 30 } }; } return null; }
+function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; let bw = _bW(b), bh = _bH(b); return { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; } if (state.minis[id]) { let m = state.minis[id], bx = 0, by = 0; if (m.parentId && state.bubbles[m.parentId]) { bx = state.bubbles[m.parentId].x; by = state.bubbles[m.parentId].y; } if (m.cgMini) { let mw = m.w || 100, mh = m.h || 100; return { x: bx + m.x + mw / 2, y: by + m.y + mh / 2, rect: { width: mw, height: mh } }; } return { x: bx + m.x, y: by + m.y, rect: { width: m.width || 60, height: m.height || 30 } }; } return null; }
 
 function getEI(bid, c, tx, ty) { if (!c || !c.rect) return { x: 0, y: 0 }; let dx = tx - c.x, dy = ty - c.y; let isC = state.bubbles[bid] && state.bubbles[bid].shape === 'circle'; if (isC) { let r = c.rect.width / 2, d = Math.hypot(dx, dy); return d === 0 ? { x: c.x, y: c.y } : { x: c.x + (dx / d) * r, y: c.y + (dy / d) * r }; } let w2 = c.rect.width / 2, h2 = c.rect.height / 2, sx = dx ? Math.abs(w2 / dx) : Infinity, sy = dy ? Math.abs(h2 / dy) : Infinity, s = Math.min(sx, sy); return s > 1 ? { x: c.x, y: c.y } : { x: c.x + dx * s, y: c.y + dy * s }; }
 
@@ -682,12 +780,17 @@ function getLPt(l, t) {
     if (target <= 0) return { x: l[0].x, y: l[0].y };
     if (target >= l._len) return { x: l[l.length - 1].x, y: l[l.length - 1].y };
 
-    // Binary search for speed over 100-300 point ranges is overkill, linear is fine for < 500 length arrays.
-    for (let i = 0; i < l.length - 1; i++) {
-        if (target <= l._dists[i + 1]) {
-            let segD = l._dists[i + 1] - l._dists[i];
-            let w = segD === 0 ? 0 : (target - l._dists[i]) / segD;
-            return { x: l[i].x + (l[i + 1].x - l[i].x) * w, y: l[i].y + (l[i + 1].y - l[i].y) * w };
+    let low = 0, high = l.length - 2;
+    while (low <= high) {
+        let mid = (low + high) >> 1;
+        if (target >= l._dists[mid] && target <= l._dists[mid + 1]) {
+            let segD = l._dists[mid + 1] - l._dists[mid];
+            let w = segD === 0 ? 0 : (target - l._dists[mid]) / segD;
+            return { x: l[mid].x + (l[mid + 1].x - l[mid].x) * w, y: l[mid].y + (l[mid + 1].y - l[mid].y) * w };
+        } else if (target < l._dists[mid]) {
+            high = mid - 1;
+        } else {
+            low = mid + 1;
         }
     }
     return { x: l[l.length - 1].x, y: l[l.length - 1].y };
@@ -746,8 +849,8 @@ function createBAP(pId) {
 function addLTL(linkId) { let l = state.links[linkId]; if (!l) return; if (!l.labels) l.labels = []; l.labels.push({ id: 'lbl_' + generateId(), text: 'Связь', type: 'callout', offset: 0.5 }); selectEntity('link', linkId); queueRender(); saveState(); }
 
 // Full rebuild after undo/redo
-function fullRebuild() { for (let id in pxB) { if (pxB[id]._edgeTmr) { clearTimeout(pxB[id]._edgeTmr); pxB[id]._edgeTmr = null; } pxB[id].c.destroy({ children: true }); delete pxB[id]; } for (let id in pxM) { pxM[id].c.destroy({ children: true }); delete pxM[id]; } for (let id in pxL) { dLC(id); } for (let id in pxP) { pxP[id].g.destroy(); delete pxP[id]; } for (let id in partSys) { partSys[id].forEach(p => { if (p.sprite) p.sprite.destroy(); }); delete partSys[id]; } needsRender = true; }
-function dLC(id) { let c = pxL[id]; if (!c) return; c.bg.destroy(); c.glow.destroy(); c.l1.destroy(); c.l2.destroy(); c.hit.destroy({ children: true }); c.lblC.destroy({ children: true }); c.partC.destroy({ children: true }); delete pxL[id]; }
+function fullRebuild() { for (let id in pxB) { if (pxB[id]._edgeTmr) { clearTimeout(pxB[id]._edgeTmr); pxB[id]._edgeTmr = null; } if (!pxB[id].c.destroyed) pxB[id].c.destroy({ children: true }); delete pxB[id]; } for (let id in pxM) { if (!pxM[id].c.destroyed) pxM[id].c.destroy({ children: true }); delete pxM[id]; } for (let id in pxL) { dLC(id); } for (let id in pxP) { if (!pxP[id].ctn.destroyed) pxP[id].ctn.destroy({ children: true }); delete pxP[id]; } for (let id in partSys) { partSys[id].forEach(p => { if (p.sprite && !p.sprite.destroyed) p.sprite.destroy(); }); delete partSys[id]; } needsRender = true; }
+function dLC(id) { let c = pxL[id]; if (!c) return; if (!c.bg.destroyed) c.bg.destroy(); if (!c.glow.destroyed) c.glow.destroy(); if (!c.l1.destroyed) c.l1.destroy(); if (!c.l2.destroyed) c.l2.destroy(); if (!c.hit.destroyed) c.hit.destroy({ children: true }); if (!c.lblC.destroyed) c.lblC.destroy({ children: true }); if (!c.partC.destroyed) c.partC.destroy({ children: true }); if (c.deadSprites) { c.deadSprites.forEach(s => { if (!s.destroyed) s.destroy(); }); c.deadSprites = []; } delete pxL[id]; }
 
 // Line Creation Mode functions
 function startLineCreationMode() {
@@ -876,6 +979,14 @@ app.stage.on('pointerdown', e => {
         return;
     }
 
+    if (e.target === app.stage || e.target.id === 'pixi-canvas') {
+        // Clear point selection if clicking on empty space
+        if (selectedPointId && !dragState) {
+            selectedPointId = null;
+            queueRender();
+        }
+    }
+
     if (dragState) return;
     if (ctxMenu) ctxMenu.style.display = 'none';
     selectEntity(null, null);
@@ -916,7 +1027,7 @@ app.stage.on('pointerup', e => {
             let bw = _bW(b), bh = _bH(b);
             let scr = getScreenPt(b.x + bw / 2, b.y + bh / 2);
             let sw = bw * worldContainer.scale.x, sh = bh * worldContainer.scale.y;
-            if (scr.x + sw/2 > minX && scr.x - sw/2 < maxX && scr.y + sh/2 > minY && scr.y - sh/2 < maxY) {
+            if (scr.x + sw / 2 > minX && scr.x - sw / 2 < maxX && scr.y + sh / 2 > minY && scr.y - sh / 2 < maxY) {
                 selectedBubbles.add(id);
             }
         }
@@ -967,10 +1078,10 @@ function _bubEdgeCheck(e, bid, c, cache) {
     } else {
         let nL = lx >= -_EDGE && lx <= _EDGE, nR = lx >= bw - _EDGE && lx <= bw + _EDGE;
         let nT = ly >= -_EDGE && ly <= _EDGE, nB = ly >= bh - _EDGE && ly <= bh + _EDGE;
-        if (nR && nB) { dir='se'; cur='se-resize'; } else if (nL && nT) { dir='nw'; cur='nw-resize'; }
-        else if (nR && nT) { dir='ne'; cur='ne-resize'; } else if (nL && nB) { dir='sw'; cur='sw-resize'; }
-        else if (nR) { dir='e'; cur='e-resize'; } else if (nL) { dir='w'; cur='w-resize'; }
-        else if (nB) { dir='s'; cur='s-resize'; } else if (nT) { dir='n'; cur='n-resize'; }
+        if (nR && nB) { dir = 'se'; cur = 'se-resize'; } else if (nL && nT) { dir = 'nw'; cur = 'nw-resize'; }
+        else if (nR && nT) { dir = 'ne'; cur = 'ne-resize'; } else if (nL && nB) { dir = 'sw'; cur = 'sw-resize'; }
+        else if (nR) { dir = 'e'; cur = 'e-resize'; } else if (nL) { dir = 'w'; cur = 'w-resize'; }
+        else if (nB) { dir = 's'; cur = 's-resize'; } else if (nT) { dir = 'n'; cur = 'n-resize'; }
     }
     if (dir) {
         cache._resCur = cur;
@@ -1004,8 +1115,8 @@ function _bubStartResize(e, bd, cache, c) {
             bd.size = newR * 2; bd.x = cx - newR; bd.y = cy - newR;
             bd.width = bd.size; bd.height = bd.size;
         } else {
-            if (dir.includes('e')) { bd.width  = Math.max(60, iW + dx); }
-            if (dir.includes('w')) { bd.x = iX + dx; bd.width  = Math.max(60, iW - dx); }
+            if (dir.includes('e')) { bd.width = Math.max(60, iW + dx); }
+            if (dir.includes('w')) { bd.x = iX + dx; bd.width = Math.max(60, iW - dx); }
             if (dir.includes('s')) { bd.height = Math.max(60, iH + dy); }
             if (dir.includes('n')) { bd.y = iY + dy; bd.height = Math.max(60, iH - dy); }
         }
@@ -1038,9 +1149,9 @@ function renderBubbles() {
                 if (linkingMode || lineCreationMode) {
                     let pId = 'p_' + generateId(), bd2 = state.bubbles[d.id];
                     let mp2 = getMapPt(e);
-                    let cx2 = bd2 ? bd2.x + _bW(bd2)/2 : 0, cy2 = bd2 ? bd2.y + _bH(bd2)/2 : 0;
+                    let cx2 = bd2 ? bd2.x + _bW(bd2) / 2 : 0, cy2 = bd2 ? bd2.y + _bH(bd2) / 2 : 0;
                     let dist2 = Math.hypot(mp2.x - cx2, mp2.y - cy2);
-                    let halfR = Math.max(_bW(bd2)||1, _bH(bd2)||1) * 0.5;
+                    let halfR = Math.max(_bW(bd2) || 1, _bH(bd2) || 1) * 0.5;
                     let ang2 = dist2 > halfR * 0.3 ? Math.atan2(mp2.y - cy2, mp2.x - cx2) : null;
                     state.points[pId] = { attachedTo: d.id, angle: ang2 };
                     if (linkingMode) handleLinking(pId); else handleLineSeqClick(pId); return;
@@ -1095,7 +1206,7 @@ function renderBubbles() {
                     ev.stopPropagation(); ctxMenu.style.display = 'none';
                     delete state.bubbles[d.id];
                     for (let m in state.minis) if (state.minis[m]?.parentId === d.id) delete state.minis[m];
-                    for (let p in state.points) if (state.points[p]?.attachedTo === d.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX||0; state.points[p].y = state.points[p]._renderedY||0; }
+                    for (let p in state.points) if (state.points[p]?.attachedTo === d.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX || 0; state.points[p].y = state.points[p]._renderedY || 0; }
                     selectEntity(null, null); queueRender(); saveState();
                 };
                 ctxMenu.appendChild(bdel);
@@ -1109,23 +1220,23 @@ function renderBubbles() {
         let bw = _bW(d), bh = _bH(d), isC = d.shape === 'circle';
         let s = isC ? d.size : Math.max(bw, bh); // keep s for circle radius math
         cache.bg.clear(); cache.bg.beginFill(cHex(d.bgColor), cAlpha(d.bgColor));
-        if (isC) cache.bg.drawCircle(s/2, s/2, s/2); else cache.bg.drawRoundedRect(0, 0, bw, bh, 20); cache.bg.endFill();
+        if (isC) cache.bg.drawCircle(s / 2, s / 2, s / 2); else cache.bg.drawRoundedRect(0, 0, bw, bh, 20); cache.bg.endFill();
         // Glow
         cache.bg.beginFill(cHex(d.glowColor), 0.08);
-        if (isC) cache.bg.drawCircle(s/2, s/2, s/2+15); else cache.bg.drawRoundedRect(-15,-15,bw+30,bh+30,35);
+        if (isC) cache.bg.drawCircle(s / 2, s / 2, s / 2 + 15); else cache.bg.drawRoundedRect(-15, -15, bw + 30, bh + 30, 35);
         cache.bg.endFill();
         cache.brd.clear(); cache.brd.lineStyle(2, cHex(d.borderColor), 1);
-        if (isC) cache.brd.drawCircle(s/2, s/2, s/2); else cache.brd.drawRoundedRect(0, 0, bw, bh, 20);
+        if (isC) cache.brd.drawCircle(s / 2, s / 2, s / 2); else cache.brd.drawRoundedRect(0, 0, bw, bh, 20);
 
         let isSel = (selectedEntity && selectedEntity.id === d.id && selectedEntity.type === 'main') || selectedBubbles.has(d.id);
         if (isSel) {
             cache.brd.lineStyle(2, 0xffffff, selectedBubbles.has(d.id) ? 1.0 : 0.7);
-            if (isC) cache.brd.drawCircle(s/2, s/2, s/2+5);
-            else cache.brd.drawRoundedRect(-5, -5, bw+10, bh+10, 24);
+            if (isC) cache.brd.drawCircle(s / 2, s / 2, s / 2 + 5);
+            else cache.brd.drawRoundedRect(-5, -5, bw + 10, bh + 10, 24);
         }
-        cache.title.text = d.name || ''; cache.title.style.wordWrapWidth = (isC?s:bw) - 40; cache.title.position.set((isC?s:bw)/2, 20);
-        let gx = isC ? s/2 + (s/2)*0.707 - 18 : bw - 25;
-        let gy = isC ? s/2 - (s/2)*0.707 + 18 : 25;
+        cache.title.text = d.name || ''; cache.title.style.wordWrapWidth = (isC ? s : bw) - 40; cache.title.position.set((isC ? s : bw) / 2, 20);
+        let gx = isC ? s / 2 + (s / 2) * 0.707 - 18 : bw - 25;
+        let gy = isC ? s / 2 - (s / 2) * 0.707 + 18 : 25;
         cache.gear.position.set(gx, gy);
         cache.c.position.set(d.x, d.y);
     });
@@ -1175,7 +1286,7 @@ function renderMinis() {
                 bdel.onclick = ev => {
                     ev.stopPropagation(); ctxMenu.style.display = 'none';
                     delete state.minis[d.id];
-                    for (let p in state.points) if (state.points[p]?.attachedTo === d.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX||0; state.points[p].y = state.points[p]._renderedY||0; }
+                    for (let p in state.points) if (state.points[p]?.attachedTo === d.id) { state.points[p].attachedTo = null; state.points[p].x = state.points[p]._renderedX || 0; state.points[p].y = state.points[p]._renderedY || 0; }
                     selectEntity(null, null); queueRender(); saveState();
                 };
                 ctxMenu.appendChild(bdel);
@@ -1207,21 +1318,21 @@ function renderMinis() {
             const tw = d.w || (cache.txt.width + 48), th = d.h || (cache.txt.height + 32);
             const rad = d.shape === 'oval' ? Math.min(tw, th) / 2 : (d.borderRadius != null ? d.borderRadius : 20);
             cache.bg.clear();
-            cache.bg.beginFill(cHex(d.glowColor), 0.08); cache.bg.drawRoundedRect(-tw/2-6, -th/2-6, tw+12, th+12, rad+6); cache.bg.endFill();
+            cache.bg.beginFill(cHex(d.glowColor), 0.08); cache.bg.drawRoundedRect(-tw / 2 - 6, -th / 2 - 6, tw + 12, th + 12, rad + 6); cache.bg.endFill();
             cache.bg.beginFill(cHex(d.bgColor), cAlpha(d.bgColor));
-            if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw/2, th/2);
-            else cache.bg.drawRoundedRect(-tw/2, -th/2, tw, th, rad);
+            if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw / 2, th / 2);
+            else cache.bg.drawRoundedRect(-tw / 2, -th / 2, tw, th, rad);
             cache.bg.endFill();
             cache.bg.lineStyle(1.5, cHex(d.borderColor), 1);
-            if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw/2, th/2);
-            else cache.bg.drawRoundedRect(-tw/2, -th/2, tw, th, rad);
+            if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw / 2, th / 2);
+            else cache.bg.drawRoundedRect(-tw / 2, -th / 2, tw, th, rad);
             if (selectedEntity?.id === d.id && selectedEntity.type === 'mini') {
                 cache.bg.lineStyle(2, 0xffffff, 0.7);
-                if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw/2+4, th/2+4);
-                else cache.bg.drawRoundedRect(-tw/2-4, -th/2-4, tw+8, th+8, rad+4);
+                if (d.shape === 'oval') cache.bg.drawEllipse(0, 0, tw / 2 + 4, th / 2 + 4);
+                else cache.bg.drawRoundedRect(-tw / 2 - 4, -th / 2 - 4, tw + 8, th + 8, rad + 4);
             }
             cache.txt.position.set(0, 0);
-            cache.gear.position.set(tw/2 - 4, -th/2 + 4);
+            cache.gear.position.set(tw / 2 - 4, -th / 2 + 4);
         } else {
             // ── Standard text-pill mini ───────────────────────────────────────
             cache.txt.text = d.name || ''; let tw = cache.txt.width + 24, th = cache.txt.height + 16;
@@ -1247,7 +1358,7 @@ function renderLinks(fullRebuild = true) {
             let lblC = new PIXI.Container(), partC = new PIXI.Container();
             layerBg.addChild(bg); layerGlow.addChild(glow); layerLines.addChild(l1); layerLines.addChild(l2); layerHit.addChild(hit);
             layerLbl.addChild(lblC); layerPart.addChild(partC);
-            cache = { bg, glow, l1, l2, hit, lblC, partC, sliders: null, lut1: [], lut2: [], pL1: 0, pL2: 0, lblTxt: {}, linkId: link.id }; pxL[link.id] = cache;
+            cache = { bg, glow, l1, l2, hit, lblC, partC, sliders: null, lut1: [], lut2: [], pL1: 0, pL2: 0, lblTxt: {}, linkId: link.id, deadSprites: [] }; pxL[link.id] = cache;
             hit._linkId = link.id;
             hit.on('pointerdown', e => {
                 if (ctxMenu) ctxMenu.style.display = 'none';
@@ -1379,6 +1490,18 @@ function renderLinks(fullRebuild = true) {
             cache.lut2 = link.lineMode === 'double' ? buildLUT(p2, link.type) : []; cache.pL2 = lutLen(cache.lut2);
             cache.p1 = p1; cache.p2 = p2;
 
+            let getWpT = (lut, wp) => {
+                if (!lut || lut.length === 0 || !lut._len) return 0;
+                let mind = Infinity, minT = 0;
+                for (let i = 0; i < lut.length; i++) {
+                    let d = Math.hypot(lut[i].x - wp.x, lut[i].y - wp.y);
+                    if (d < mind) { mind = d; minT = lut._dists[i] / lut._len; }
+                }
+                return minT;
+            };
+            cache.wpT1 = link.waypoints ? link.waypoints.map((wId, i) => ap[i + 1] ? getWpT(cache.lut1, ap[i + 1]) : 0) : [];
+            cache.wpT2 = link.waypoints && link.lineMode === 'double' ? link.waypoints.map((wId, i) => ap[i + 1] ? getWpT(cache.lut2, ap[i + 1]) : 0) : [];
+
             cache.bg.clear(); if (link.hasBg && !rawHid) drawPath(cache.bg, ap, link.type, cHex(link.bgColor), link.bgWidth || 20, cAlpha(link.bgColor));
             cache.glow.clear();
             if (link.hasGlow !== false && !rawHid) { let gO = link.glowOpacity != null ? link.glowOpacity : 0.3; drawPath(cache.glow, p1, link.type, cHex(link.color1), (link.width1 || 2) + 8, gO); if (link.lineMode === 'double') drawPath(cache.glow, p2, link.type, cHex(link.color2), (link.width2 || 2) + 8, gO * 0.8); }
@@ -1449,33 +1572,98 @@ function renderLinks(fullRebuild = true) {
         let pAnim1 = c1.isP;
         let pAnim2 = link.lineMode === 'double' && c2.isP;
 
-        // Only spawn new particles if animation is playing
+        // Only spawn new particles if animation is playing and point/line is not paused
+        let l1Paused = link.l1Paused || false;
+        let l2Paused = link.l2Paused || false;
+
         if (state.animationMode === 'play') {
-            if (pAnim1) {
-                let V1 = sp1;
-                let D1 = 40 / (parseFloat(c1.count) || 1);
+            if (pAnim1 && !l1Paused) {
                 let bw1 = (link.animType1 && link.animType1.includes('bwd')) || link.l1Reverse;
-                if (cache.pL1 > 0) {
-                    let bs1 = V1 / cache.pL1;
-                    cache.sA1 = (cache.sA1 || 0) + (V1 / D1);
-                    while (cache.sA1 >= 1) {
-                        cache.sA1 -= 1;
-                        let em = [...(c1.emojis || '✨')];
-                        pArr.push({ t: bw1 ? 1 : 0, speed: bs1 * (bw1 ? -1 : 1), li: 1, sym: em[Math.floor(Math.random() * em.length)] || '✨', offY: (Math.random() - 0.5) * (c1.wobble || 0), sprite: null });
+                let startPtId = bw1 ? link.to : link.from;
+                let startPt = state.points[startPtId];
+                let ptPaused = startPt && startPt.paused;
+
+                if (!ptPaused) {
+                    let V1 = sp1;
+                    let D1 = 40 / (parseFloat(c1.count) || 1);
+                    if (cache.pL1 > 0) {
+                        let bs1 = V1 / cache.pL1;
+                        cache.sA1 = (cache.sA1 || 0) + (V1 / D1);
+                        while (cache.sA1 >= 1) {
+                            cache.sA1 -= 1;
+                            let em = [...(c1.emojis || '✨')];
+                            let sym = em[Math.floor(Math.random() * em.length)] || '✨';
+
+                            let tData = { q: Math.random().toFixed(2), p: Math.floor(Math.random() * 100) + 1, m: 0 };
+                            if (cache.deadSprites && cache.deadSprites.length > 0) {
+                                let oldD = cache.deadSprites[cache.deadSprites.length - 1]._tData;
+                                if (oldD && Math.random() > 0.5) { // 50% chance to retain and upgrade
+                                    tData = oldD;
+                                    tData.m = (tData.m || 0) + 1;
+                                    state.globalTokenStats.retained = (state.globalTokenStats.retained || 0) + 1;
+                                }
+                            }
+
+                            let qKey = parseFloat(tData.q).toFixed(1);
+                            if (qKey === '0.0') qKey = '0.1';
+                            state.globalTokenStats.producedByQ = state.globalTokenStats.producedByQ || {};
+                            state.globalTokenStats.producedByQ[qKey] = (state.globalTokenStats.producedByQ[qKey] || 0) + 1;
+
+                            pArr.push({ t: bw1 ? 1 : 0, speed: bs1 * (bw1 ? -1 : 1), li: 1, sym: sym, offY: (Math.random() - 0.5) * (c1.wobble || 0), sprite: null, tData: tData, wpIdx: bw1 ? (link.waypoints ? link.waypoints.length : 0) : -1 });
+                            if (startPt) {
+                                startPt.stats = startPt.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+                                startPt.stats.spawned++;
+                                startPt.stats.bySym[sym] = (startPt.stats.bySym[sym] || 0) + 1;
+                                let spKey = link.id + (bw1 ? "_bwd" : "_fwd");
+                                startPt.stats.spawnDir = startPt.stats.spawnDir || {};
+                                startPt.stats.spawnDir[spKey] = (startPt.stats.spawnDir[spKey] || 0) + 1;
+                            }
+                        }
                     }
                 }
             }
-            if (pAnim2) {
-                let V2 = sp2;
-                let D2 = 40 / (parseFloat(c2.count) || 1);
+            if (pAnim2 && !l2Paused) {
                 let bw2 = (link.animType2 && link.animType2.includes('bwd')) || link.l2Reverse;
-                if (cache.pL2 > 0) {
-                    let bs2 = V2 / cache.pL2;
-                    cache.sA2 = (cache.sA2 || 0) + (V2 / D2);
-                    while (cache.sA2 >= 1) {
-                        cache.sA2 -= 1;
-                        let em = [...(c2.emojis || '✨')];
-                        pArr.push({ t: bw2 ? 1 : 0, speed: bs2 * (bw2 ? -1 : 1), li: 2, sym: em[Math.floor(Math.random() * em.length)] || '✨', offY: (Math.random() - 0.5) * (c2.wobble || 0), sprite: null });
+                let startPtId = bw2 ? link.to : link.from;
+                let startPt = state.points[startPtId];
+                let ptPaused = startPt && startPt.paused;
+
+                if (!ptPaused) {
+                    let V2 = sp2;
+                    let D2 = 40 / (parseFloat(c2.count) || 1);
+                    if (cache.pL2 > 0) {
+                        let bs2 = V2 / cache.pL2;
+                        cache.sA2 = (cache.sA2 || 0) + (V2 / D2);
+                        while (cache.sA2 >= 1) {
+                            cache.sA2 -= 1;
+                            let em = [...(c2.emojis || '✨')];
+                            let sym = em[Math.floor(Math.random() * em.length)] || '✨';
+
+                            let tData = { q: Math.random().toFixed(2), p: Math.floor(Math.random() * 100) + 1, m: 0 };
+                            if (cache.deadSprites && cache.deadSprites.length > 0) {
+                                let oldD = cache.deadSprites[cache.deadSprites.length - 1]._tData;
+                                if (oldD && Math.random() > 0.5) { // 50% chance to retain and upgrade
+                                    tData = oldD;
+                                    tData.m = (tData.m || 0) + 1;
+                                    state.globalTokenStats.retained = (state.globalTokenStats.retained || 0) + 1;
+                                }
+                            }
+
+                            let qKey = parseFloat(tData.q).toFixed(1);
+                            if (qKey === '0.0') qKey = '0.1';
+                            state.globalTokenStats.producedByQ = state.globalTokenStats.producedByQ || {};
+                            state.globalTokenStats.producedByQ[qKey] = (state.globalTokenStats.producedByQ[qKey] || 0) + 1;
+
+                            pArr.push({ t: bw2 ? 1 : 0, speed: bs2 * (bw2 ? -1 : 1), li: 2, sym: sym, offY: (Math.random() - 0.5) * (c2.wobble || 0), sprite: null, tData: tData, wpIdx: bw2 ? (link.waypoints ? link.waypoints.length : 0) : -1 });
+                            if (startPt) {
+                                startPt.stats = startPt.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+                                startPt.stats.spawned++;
+                                startPt.stats.bySym[sym] = (startPt.stats.bySym[sym] || 0) + 1;
+                                let spKey2 = link.id + (bw2 ? "_bwd" : "_fwd");
+                                startPt.stats.spawnDir = startPt.stats.spawnDir || {};
+                                startPt.stats.spawnDir[spKey2] = (startPt.stats.spawnDir[spKey2] || 0) + 1;
+                            }
+                        }
                     }
                 }
             }
@@ -1487,20 +1675,89 @@ function renderLinks(fullRebuild = true) {
             let isActiveAnim = isL1 ? pAnim1 : pAnim2;
             let isVisAnim = (isL1 ? c1.isP : c2.isP) && state.animationMode !== 'solid';
 
+            let linePaused = isL1 ? link.l1Paused : link.l2Paused;
+            if (linePaused) continue; // Pause individual particles if line is paused
+
+            let oldT = p.t;
             if (state.animationMode === 'play' && isActiveAnim) p.t += p.speed;
 
-            if (p.t > 1 || p.t < 0) { if (p.sprite) p.sprite.destroy(); pArr.splice(i, 1); continue; }
+            // Waypoint crossing logic with Checkpoints (wpIdx)
+            if (link.waypoints && state.animationMode === 'play' && isActiveAnim) {
+                let wpT = isL1 ? cache.wpT1 : cache.wpT2;
+                let bw = p.speed < 0;
+                let pKey = link.id + (bw ? "_bwd" : "_fwd");
+                if (wpT) {
+                    // Check if waypoints array changed length under us
+                    if (p.wpTotal !== link.waypoints.length) {
+                        p.wpTotal = link.waypoints.length;
+                        // Find closest waypoint index BEFORE our current position
+                        let newIdx = bw ? link.waypoints.length : -1;
+                        if (!bw) {
+                            for (let i = 0; i < link.waypoints.length; i++) {
+                                if (p.t > wpT[i]) newIdx = i; else break;
+                            }
+                        } else {
+                            for (let i = link.waypoints.length - 1; i >= 0; i--) {
+                                if (p.t < wpT[i]) newIdx = i; else break;
+                            }
+                        }
+                        p.wpIdx = newIdx;
+                    }
+
+                    if (!bw) {
+                        for (let wIdx = (p.wpIdx === undefined ? -1 : p.wpIdx) + 1; wIdx < link.waypoints.length; wIdx++) {
+                            let wt = wpT[wIdx];
+                            if (p.t > wt) {
+                                p.wpIdx = wIdx;
+                                let wPt = state.points[link.waypoints[wIdx]];
+                                if (wPt) {
+                                    wPt.stats = wPt.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+                                    wPt.stats.passed++; wPt.stats.bySym[p.sym] = (wPt.stats.bySym[p.sym] || 0) + 1;
+                                    wPt.stats.passDir = wPt.stats.passDir || {};
+                                    wPt.stats.passDir[pKey] = (wPt.stats.passDir[pKey] || 0) + 1;
+                                }
+                            } else { break; }
+                        }
+                    } else {
+                        for (let wIdx = Math.min((p.wpIdx === undefined ? link.waypoints.length : p.wpIdx) - 1, link.waypoints.length - 1); wIdx >= 0; wIdx--) {
+                            let wt = wpT[wIdx];
+                            if (p.t < wt) {
+                                p.wpIdx = wIdx;
+                                let wPt = state.points[link.waypoints[wIdx]];
+                                if (wPt) {
+                                    wPt.stats = wPt.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+                                    wPt.stats.passed++; wPt.stats.bySym[p.sym] = (wPt.stats.bySym[p.sym] || 0) + 1;
+                                    wPt.stats.passDir = wPt.stats.passDir || {};
+                                    wPt.stats.passDir[pKey] = (wPt.stats.passDir[pKey] || 0) + 1;
+                                }
+                            } else { break; }
+                        }
+                    }
+                }
+            }
+
+            if (p.t > 1 || p.t < 0) {
+                let endPtId = (p.speed > 0) ? link.to : link.from;
+                let pData = state.points[endPtId];
+                if (pData) {
+                    pData.stats = pData.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+                    pData.stats.arrived++;
+                    let arKey = link.id + (p.speed > 0 ? "_fwd" : "_bwd");
+                    pData.stats.arriveDir = pData.stats.arriveDir || {};
+                    pData.stats.arriveDir[arKey] = (pData.stats.arriveDir[arKey] || 0) + 1;
+                }
+                if (p.sprite) { p.sprite.visible = false; p.sprite._tData = p.tData; if (cache.deadSprites && cache.deadSprites.length < 1000) cache.deadSprites.push(p.sprite); else p.sprite.destroy(); }
+                pArr.splice(i, 1); continue;
+            }
 
             let lut = isL1 ? cache.lut1 : cache.lut2;
-            if (!lut || lut.length < 2) { if (p.sprite) p.sprite.destroy(); pArr.splice(i, 1); continue; }
+            if (!lut || lut.length < 2) {
+                if (p.sprite) { p.sprite.visible = false; p.sprite._tData = p.tData; if (cache.deadSprites && cache.deadSprites.length < 1000) cache.deadSprites.push(p.sprite); else p.sprite.destroy(); }
+                pArr.splice(i, 1); continue;
+            }
 
             if (!isVisAnim) {
-                // If the user turned OFF particle rendering entirely for this line, DESTROY the old particles
-                // to free up CPU / Memory immediately rather than keeping stale cache.
-                // However, we only destroy if they aren't meant to be paused.
-                // state.animationMode === 'solid' means global solid, c1.isP means track changed to simple dashed.
-                // If it's just paused (isVisAnim is true when paused), this block isn't hit.
-                if (p.sprite) p.sprite.destroy();
+                if (p.sprite) { p.sprite.visible = false; p.sprite._tData = p.tData; if (cache.deadSprites && cache.deadSprites.length < 1000) cache.deadSprites.push(p.sprite); else p.sprite.destroy(); }
                 pArr.splice(i, 1);
                 continue;
             }
@@ -1512,10 +1769,18 @@ function renderLinks(fullRebuild = true) {
             let r = bw * 1.5 * cc.size, col = isL1 ? (link.color1 || '#00ffcc') : (link.color2 || '#ff00ff'), mode = cc.mode;
 
             if (!p.sprite) {
-                if (mode === 'pixi_symbols') { p.sprite = new PIXI.Sprite(gSymTex(p.sym, r, col)); }
-                else if (mode === 'pixi_energy') { p.sprite = new PIXI.Sprite(gEnTex(col, r)); }
-                else { p.sprite = new PIXI.Sprite(gShTex(cc.shape, col, r)); }
-                p.sprite.anchor.set(0.5, 0.5); cache.partC.addChild(p.sprite);
+                if (cache.deadSprites && cache.deadSprites.length > 0) {
+                    p.sprite = cache.deadSprites.pop();
+                    if (mode === 'pixi_symbols') { p.sprite.texture = gSymTex(p.sym, r, col); }
+                    else if (mode === 'pixi_energy') { p.sprite.texture = gEnTex(col, r); }
+                    else { p.sprite.texture = gShTex(cc.shape, col, r); }
+                } else {
+                    if (mode === 'pixi_symbols') { p.sprite = new PIXI.Sprite(gSymTex(p.sym, r, col)); }
+                    else if (mode === 'pixi_energy') { p.sprite = new PIXI.Sprite(gEnTex(col, r)); }
+                    else { p.sprite = new PIXI.Sprite(gShTex(cc.shape, col, r)); }
+                    p.sprite.anchor.set(0.5, 0.5); cache.partC.addChild(p.sprite);
+                }
+                p.sprite._tData = p.tData;
             }
 
             p.sprite.visible = true;
@@ -1629,33 +1894,326 @@ function renderLinks(fullRebuild = true) {
             }
         }
 
-
     });
 }
 
 // Render Points
 function renderPoints() {
-    let active = new Set(Object.keys(state.points)); for (let id in pxP) { if (!active.has(id)) { pxP[id].g.destroy(); delete pxP[id]; } }
+    if (!window.laserGrp) { window.laserGrp = new PIXI.Graphics(); layerPts.addChild(window.laserGrp); }
+    window.laserGrp.clear();
+    layerPts.setChildIndex(window.laserGrp, layerPts.children.length - 1);
+    let active = new Set(Object.keys(state.points));
+    for (let id in pxP) {
+        if (!active.has(id)) {
+            pxP[id].ctn.destroy({ children: true });
+            if (pxP[id].htmlHud) pxP[id].htmlHud.remove();
+            delete pxP[id];
+        }
+    }
     for (let pId in state.points) {
         let pd = state.points[pId]; if (!pd) continue; let u = getPU(pId);
-        if (u === 0 && pId !== linkingSourcePointId && (!dragState || dragState.id !== pId)) { delete state.points[pId]; if (pxP[pId]) { pxP[pId].g.destroy(); delete pxP[pId]; } continue; }
+        if (u === 0 && pId !== linkingSourcePointId && (!dragState || dragState.id !== pId)) {
+            delete state.points[pId];
+            if (pxP[pId]) {
+                pxP[pId].ctn.destroy({ children: true });
+                if (pxP[pId].htmlHud) pxP[pId].htmlHud.remove();
+                delete pxP[pId];
+            }
+            continue;
+        }
         let cache = pxP[pId]; if (!cache) {
-            let g = new PIXI.Graphics(); g.eventMode = 'static'; g.cursor = 'grab'; layerPts.addChild(g); cache = { g }; pxP[pId] = cache;
+            let ctn = new PIXI.Container(); layerPts.addChild(ctn);
+            let g = new PIXI.Graphics(); g.eventMode = 'static'; g.cursor = 'pointer';
+
+            // CREATE HTML HUD
+            let htmlHud = document.createElement('div');
+            htmlHud.className = 'point-html-hud glass-panel';
+            htmlHud.style.position = 'absolute';
+            htmlHud.style.pointerEvents = 'auto'; // allow clicking buttons
+            htmlHud.style.display = 'none';
+            htmlHud.style.minWidth = '140px';
+            htmlHud.style.transformOrigin = '0 0';
+
+            htmlHud.innerHTML = `
+                <div class="hud-content" style="white-space:pre-wrap; font-size:11px; margin-bottom:6px;"></div>
+                <div style="display:flex; gap:8px;">
+                    <div class="hud-btn-laser" style="cursor:pointer; opacity:0.5;" title="Включить лазер">🎯</div>
+                    <div class="hud-btn-pin" style="cursor:pointer;" title="Отображать всегда">📌</div>
+                    <div class="hud-btn-magnet" style="cursor:pointer;" title="Привязать к точке">🧲</div>
+                    <div class="hud-btn-pause-pt" style="cursor:pointer; color:#ffa500;" title="Остановка точки">⏸️ Точка</div>
+                    <div class="hud-btn-pause-line" style="cursor:pointer; color:#ffa500;" title="Остановка линий">⏸️ Линии</div>
+                    <div class="hud-btn-copy" style="cursor:pointer;" title="Создать копию">📝</div>
+                    <div class="hud-btn-fly" style="cursor:pointer;" title="Центрировать">🚩</div>
+                </div>
+            `;
+            let lyr = document.getElementById('point-hud-layer');
+            if (lyr) lyr.appendChild(htmlHud);
+
+            // Bind events for buttons
+            htmlHud.querySelector('.hud-btn-laser').onpointerdown = e => { e.stopPropagation(); pd.laserOn = !pd.laserOn; e.target.style.opacity = pd.laserOn ? "1" : "0.5"; queueRender(); };
+            htmlHud.querySelector('.hud-btn-pin').onpointerdown = e => { e.stopPropagation(); pd.pinned = !pd.pinned; queueRender(); };
+            htmlHud.querySelector('.hud-btn-magnet').onpointerdown = e => {
+                e.stopPropagation();
+                pd.hudDetached = !pd.hudDetached;
+                if (pd.hudDetached) {
+                    pd.hudX = pd.x; pd.hudY = pd.y; // lock to current world pos
+                }
+                queueRender();
+            };
+            htmlHud.querySelector('.hud-btn-pause-pt').onpointerdown = e => { e.stopPropagation(); pd.paused = !pd.paused; queueRender(); };
+            htmlHud.querySelector('.hud-btn-pause-line').onpointerdown = e => {
+                e.stopPropagation(); pd.linesPaused = !pd.linesPaused;
+                Object.values(state.links).forEach(l => {
+                    if (!l) return;
+                    if (l.from === pId || l.waypoints?.includes(pId)) l.l1Paused = pd.linesPaused;
+                    if (l.to === pId || l.waypoints?.includes(pId)) l.l2Paused = pd.linesPaused;
+                });
+                queueRender();
+            };
+            htmlHud.querySelector('.hud-btn-copy').onpointerdown = e => {
+                e.stopPropagation();
+                if (window.createHUDCopy) window.createHUDCopy(pId);
+            };
+            htmlHud.querySelector('.hud-btn-fly').onpointerdown = e => {
+                e.stopPropagation();
+                if (window.flyToPoint) window.flyToPoint(pd.x, pd.y);
+            };
+
+            // Draggability for the HTML HUD itself
+            let isDraggingHud = false;
+            let hudDragDX = 0, hudDragDY = 0;
+            htmlHud.onpointerdown = e => {
+                if (e.target.closest('.hud-btn') || e.target.className.includes('hud-btn')) {
+                    e.stopPropagation();
+                    return;
+                }
+                e.stopPropagation();
+                isDraggingHud = true;
+                pd.hudDetached = true;
+                let sc = worldContainer.scale.x;
+                pd.hudX = pd.hudX || pd.x || 0; pd.hudY = pd.hudY || pd.y || 0;
+                hudDragDX = (e.clientX - worldContainer.x) / sc - pd.hudX;
+                hudDragDY = (e.clientY - worldContainer.y) / sc - pd.hudY;
+                htmlHud.setPointerCapture(e.pointerId);
+            };
+            htmlHud.onpointermove = e => {
+                if (!isDraggingHud) return;
+                let sc = worldContainer.scale.x;
+                pd.hudX = (e.clientX - worldContainer.x) / sc - hudDragDX;
+                pd.hudY = (e.clientY - worldContainer.y) / sc - hudDragDY;
+                queueRender();
+            };
+            htmlHud.onpointerup = htmlHud.onpointercancel = e => {
+                isDraggingHud = false; htmlHud.releasePointerCapture(e.pointerId);
+            };
+
+            ctn.addChild(g);
+            cache = { ctn, g, htmlHud }; pxP[pId] = cache;
+
             g.on('pointerdown', e => {
+                // If we clicked on the HTML HUD, don't let Pixi capture it
+                let ev = e.data && e.data.originalEvent;
+                if (ev && ev.target && (ev.target.closest('.point-html-hud') || ev.target.className.includes('hud-btn'))) {
+                    return; // Ignore completely
+                }
+
                 e.stopPropagation();
                 if (ctxMenu) ctxMenu.style.display = 'none';
                 if (linkingMode) { handleLinking(pId); return; }
                 if (lineCreationMode) { handleLineSeqClick(pId); return; }
-                dragState = { type: 'point', id: pId, isNew: true, sX: e.global.x, sY: e.global.y };
+
+                // If it's a left click, select the point to keep HUD open and start dragging
+                if (e.button === 0) {
+                    selectedPointId = pId;
+                    dragState = { type: 'point', id: pId, isNew: true, sX: e.global.x, sY: e.global.y };
+                }
+                queueRender();
             });
             g.on('rightclick', e => { e.stopPropagation(); openRPM(pId, { clientX: e.global.x, clientY: e.global.y }); });
+            g.on('pointerover', e => { hoveredPointId = pId; queueRender(); });
+            g.on('pointerout', e => { if (hoveredPointId === pId) { hoveredPointId = null; queueRender(); } });
         }
         let cx = pd._renderedX != null ? pd._renderedX : (pd.x || 0), cy = pd._renderedY != null ? pd._renderedY : (pd.y || 0);
         let isLinkSel = false, isLinkHov = false;
         Object.values(state.links).forEach(l => { if (!l) return; if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) { if (selectedEntity && selectedEntity.type === 'link' && selectedEntity.id === l.id) isLinkSel = true; if (hoveredLinkId === l.id) isLinkHov = true; } });
-        let isDr = dragState && dragState.id === pId, show = linkingMode || isLinkSel || isLinkHov || isDr || pId === linkingSourcePointId;
-        cache.g.clear(); if (show) { let col = u > 1 ? 0xf39c12 : 0x2ecc71; cache.g.beginFill(col, 1); cache.g.drawCircle(0, 0, 8); cache.g.endFill(); cache.g.lineStyle(2, 0xffffff, 1); cache.g.drawCircle(0, 0, 8); }
-        cache.g.position.set(cx, cy); cache.g.eventMode = show ? 'static' : 'none'; cache.g.visible = show;
+        let isDr = dragState && dragState.id === pId;
+        let isSelPt = selectedPointId === pId;
+
+        let isPinnedVisible = pd.pinned && !window.globalHidePinnedHuds;
+        let show = window.globalShowAllHuds || linkingMode || isLinkSel || isLinkHov || isDr || pId === linkingSourcePointId || hoveredPointId === pId || isSelPt || isPinnedVisible;
+
+        cache.g.clear();
+        if (show) {
+            let col = isSelPt ? 0xff0066 : (u > 1 ? 0xf39c12 : 0x2ecc71);
+            cache.g.beginFill(0, 0.001); cache.g.drawCircle(0, 0, 16); cache.g.endFill();
+            cache.g.beginFill(col, 1); cache.g.drawCircle(0, 0, 8); cache.g.endFill();
+            cache.g.lineStyle(2, 0xffffff, 1); cache.g.drawCircle(0, 0, 8);
+        }
+        cache.ctn.position.set(cx, cy);
+        cache.g.eventMode = show ? 'static' : 'none';
+        cache.ctn.visible = show;
+
+        let showHud = window.globalShowAllHuds || hoveredPointId === pId || isSelPt || isPinnedVisible;
+        if (showHud) {
+            let st = pd.stats || { spawned: 0, arrived: 0, passed: 0, bySym: {} };
+            let linesInfo = '';
+            let pLinks = [];
+            Object.values(state.links).forEach(l => {
+                if (!l) return;
+                if (l.from === pId || l.to === pId || (l.waypoints && l.waypoints.includes(pId))) pLinks.push(l);
+            });
+            if (pLinks.length > 0) {
+                pLinks.forEach((l, idx) => {
+                    let lj = idx + 1; // 1-based index
+                    let hasDirStats = false;
+                    let lineTxt = '';
+
+                    let sf = st.spawnDir ? (st.spawnDir[l.id + '_fwd'] || 0) : 0;
+                    let sb = st.spawnDir ? (st.spawnDir[l.id + '_bwd'] || 0) : 0;
+                    let pf = st.passDir ? (st.passDir[l.id + '_fwd'] || 0) : 0;
+                    let pb = st.passDir ? (st.passDir[l.id + '_bwd'] || 0) : 0;
+                    let af = st.arriveDir ? (st.arriveDir[l.id + '_fwd'] || 0) : 0;
+                    let ab = st.arriveDir ? (st.arriveDir[l.id + '_bwd'] || 0) : 0;
+
+                    if (l.from === pId) { lineTxt += `${lj} ==> отпущено: ${sf}\n`; hasDirStats = true; }
+                    if (l.to === pId && l.lineMode === 'double') { lineTxt += `${lj} <== отпущено: ${sb}\n`; hasDirStats = true; }
+
+                    if (l.waypoints && l.waypoints.includes(pId)) {
+                        lineTxt += `=${lj}=> пройдено: ${pf}\n`;
+                        if (l.lineMode === 'double') lineTxt += `<=${lj}= пройдено: ${pb}\n`;
+                        hasDirStats = true;
+                    }
+
+                    if (l.to === pId) { lineTxt += `${lj} ==> принято: ${af}\n`; hasDirStats = true; }
+                    if (l.from === pId && l.lineMode === 'double') { lineTxt += `${lj} <== принято: ${ab}\n`; hasDirStats = true; }
+
+                    if (hasDirStats) linesInfo += lineTxt;
+                });
+            } else {
+                linesInfo += `Точка без связей\n`;
+            }
+
+            let symTxt = '';
+            for (let s in st.bySym) {
+                if (st.bySym[s] > 0) symTxt += `${s}:${st.bySym[s]} `;
+            }
+            if (symTxt) linesInfo += `(${symTxt})\n`;
+
+            let finalTxt = linesInfo.trim();
+            let cContent = cache.htmlHud.querySelector('.hud-content');
+            if (cContent.innerText !== finalTxt) {
+                cContent.innerText = finalTxt;
+                cache.htmlHud.querySelector('.hud-btn-pin').innerText = pd.pinned ? '📍' : '📌';
+                cache.htmlHud.querySelector('.hud-btn-magnet').innerText = pd.hudDetached ? '🚫🧲' : '🧲';
+                let ptb = cache.htmlHud.querySelector('.hud-btn-pause-pt'); ptb.innerText = pd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = pd.paused ? '#2ecc71' : '#ffa500';
+                let plb = cache.htmlHud.querySelector('.hud-btn-pause-line'); plb.innerText = pd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = pd.linesPaused ? '#2ecc71' : '#ffa500';
+            }
+            cache.htmlHud.style.display = 'block';
+            let hx = pd.hudDetached ? (pd.hudX != null ? pd.hudX : cx) : cx + 20;
+            let hy = pd.hudDetached ? (pd.hudY != null ? pd.hudY : cy) : cy - 20;
+            cache.htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
+            if (pd.hudX == null) pd.hudX = cx;
+            if (pd.hudY == null) pd.hudY = cy;
+
+            if (pd.hudDetached && pd.laserOn) {
+                let rect = cache.htmlHud.getBoundingClientRect();
+                let sc = worldContainer.scale.x;
+                let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+                let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+                window.laserGrp.lineStyle(2, 0x00ffcc, 0.8);
+                window.laserGrp.moveTo(cx, cy);
+                window.laserGrp.lineTo(wx, wy);
+            }
+
+            // Bring to front
+            layerPts.setChildIndex(cache.ctn, layerPts.children.length - 1);
+        } else {
+            cache.htmlHud.style.display = 'none';
+        }
+    }
+
+    // Update global point stats
+    let gSpawned = 0, gArrived = 0, gActive = 0;
+    for (let id in state.points) {
+        let s = state.points[id].stats;
+        if (s) { gSpawned += (s.spawned || 0); gArrived += (s.arrived || 0); }
+    }
+    gActive = gSpawned - gArrived;
+    let elSp = document.getElementById('global-stat-spawned');
+    if (elSp && elSp.innerText !== gSpawned.toString()) elSp.innerText = gSpawned;
+    let elAr = document.getElementById('global-stat-arrived');
+    if (elAr && elAr.innerText !== gArrived.toString()) elAr.innerText = gArrived;
+    let elAc = document.getElementById('global-stat-active');
+    if (elAc && elAc.innerText !== gActive.toString()) elAc.innerText = gActive;
+
+    let elRet = document.getElementById('global-stat-retained');
+    if (elRet) {
+        let retVal = state.globalTokenStats.retained || 0;
+        if (elRet.innerText !== retVal.toString()) elRet.innerText = retVal;
+    }
+
+    let qDrop = document.getElementById('q-dropdown');
+    if (qDrop && qDrop.style.display === 'block') {
+        let activeQ = {};
+        for (let lId in partSys) {
+            let pArr = partSys[lId];
+            if (pArr) {
+                for (let i = 0; i < pArr.length; i++) {
+                    let qK = parseFloat(pArr[i].tData.q).toFixed(1);
+                    if (qK === '0.0') qK = '0.1';
+                    activeQ[qK] = (activeQ[qK] || 0) + 1;
+                }
+            }
+        }
+        let qItems = [];
+        for (let i = 1; i <= 10; i++) {
+            let k = (i / 10).toFixed(1);
+            let a = activeQ[k] || 0;
+            let p = (state.globalTokenStats.producedByQ && state.globalTokenStats.producedByQ[k]) || 0;
+            if (a > 0 || p > 0) {
+                qItems.push(`<div style="display:flex;justify-content:space-between;font-size:11px;">
+                    <span style="color:#00ffcc">Q: ${k}</span>
+                    <span style="color:#e0e6ed">${a} | ${p}</span>
+                </div>`);
+            }
+        }
+        let htmlStr = qItems.length > 0 ? qItems.join('') : '<div style="font-size:10px;color:#aaa;text-align:center;">Пусто</div>';
+        let qCont = document.getElementById('q-stats-content');
+        if (qCont && qCont.innerHTML !== htmlStr) qCont.innerHTML = htmlStr;
+    }
+
+    // Update HTML HUD copies
+    if (window.hudCopies) {
+        for (let i = window.hudCopies.length - 1; i >= 0; i--) {
+            let cp = window.hudCopies[i];
+            let cpd = state.points[cp.pId];
+            if (!cpd || !cp.el.parentElement) {
+                if (cp.el.parentElement) cp.el.remove();
+                window.hudCopies.splice(i, 1);
+                continue;
+            }
+            let pCache = pxP[cp.pId];
+            let cTxt = pCache && pCache.htmlHud ? pCache.htmlHud.querySelector('.hud-content').innerText : "";
+            let cEl = cp.el.querySelector('.hud-content-copy');
+            if (cEl && cEl.innerText !== cTxt) cEl.innerText = cTxt;
+
+            let ptb = cp.el.querySelector('.hud-btn-pause-pt');
+            if (ptb) { ptb.innerText = cpd.paused ? '▶️ Точка' : '⏸️ Точка'; ptb.style.color = cpd.paused ? '#2ecc71' : '#ffa500'; }
+            let plb = cp.el.querySelector('.hud-btn-pause-line');
+            if (plb) { plb.innerText = cpd.linesPaused ? '▶️ Линии' : '⏸️ Линии'; plb.style.color = cpd.linesPaused ? '#2ecc71' : '#ffa500'; }
+
+            if (cp.el._laserOn) {
+                let rect = cp.el.getBoundingClientRect();
+                let sc = worldContainer.scale.x;
+                let wx = (rect.left - worldContainer.x) / sc + (rect.width / 2) / sc;
+                let wy = (rect.top - worldContainer.y) / sc + (rect.height / 2) / sc;
+                window.laserGrp.lineStyle(2, 0xff0066, 0.8);
+                let cx = cpd._renderedX != null ? cpd._renderedX : (cpd.x || 0);
+                let cy = cpd._renderedY != null ? cpd._renderedY : (cpd.y || 0);
+                window.laserGrp.moveTo(cx, cy);
+                window.laserGrp.lineTo(wx, wy);
+            }
+        }
     }
 }
 
@@ -1933,8 +2491,8 @@ app.ticker.add(delta => {
         const _sc = worldContainer.scale.x;
         const _wx1 = (Math.min(dragState.sX, dragState.curX) - worldContainer.x) / _sc;
         const _wy1 = (Math.min(dragState.sY, dragState.curY) - worldContainer.y) / _sc;
-        const _ww  = Math.abs(dragState.curX - dragState.sX) / _sc;
-        const _wh  = Math.abs(dragState.curY - dragState.sY) / _sc;
+        const _ww = Math.abs(dragState.curX - dragState.sX) / _sc;
+        const _wh = Math.abs(dragState.curY - dragState.sY) / _sc;
         selectionBox.clear();
         selectionBox.lineStyle(1, 0x00ccff, 0.8);
         selectionBox.beginFill(0x00ccff, 0.1);
@@ -1951,8 +2509,91 @@ app.ticker.add(delta => {
         renderLinks(fr);
         renderMinimap();
         needsRender = false;
+
+        let hudLayer = document.getElementById('point-hud-layer');
+        if (hudLayer) {
+            hudLayer.style.transform = `translate(${worldContainer.x}px, ${worldContainer.y}px) scale(${worldContainer.scale.x})`;
+        }
     } else { if (!isPanning) app.ticker.stop(); }
 });
+
+// Fly to point logic
+window.flyToPoint = function (px, py) {
+    let tgX = innerWidth / 2 - px * worldContainer.scale.x;
+    let tgY = innerHeight / 2 - py * worldContainer.scale.x;
+    worldContainer.x = tgX; worldContainer.y = tgY;
+    if (typeof applyCameraBounds === 'function') applyCameraBounds();
+    queueRender();
+};
+
+window.createHUDCopy = function (pId) {
+    let pd = state.points[pId]; if (!pd) return;
+    let htmlHud = document.createElement('div');
+    htmlHud.className = 'point-html-hud glass-panel';
+    htmlHud.style.position = 'absolute';
+    htmlHud.style.pointerEvents = 'auto'; // allow clicking buttons
+    let hx = pd.hudDetached ? (pd.hudX || pd.x) : pd.x + 20;
+    let hy = (pd.hudDetached ? (pd.hudY || pd.y) : pd.y - 20) + 50;
+    htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
+    htmlHud.style.minWidth = '140px';
+    htmlHud.innerHTML = `
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span style="color:#00ffcc; font-size:10px; font-weight:bold;">Копия ID: ${pId.slice(-4)}</span>
+            <div style="display:flex; gap:8px;">
+                <div class="hud-btn-laser" style="cursor:pointer; opacity:0.5;" title="Включить лазер">🎯</div>
+                <div class="hud-btn-close-copy" style="cursor:pointer; color:#ff4444;" title="Закрыть">✖</div>
+            </div>
+        </div>
+        <div class="hud-content-copy" style="white-space:pre-wrap; font-size:11px; margin-bottom:6px;"></div>
+        <div style="display:flex; gap:8px;">
+            <div class="hud-btn-pause-pt" style="cursor:pointer; color:#ffa500;" title="Остановка точки">⏸️ Точка</div>
+            <div class="hud-btn-pause-line" style="cursor:pointer; color:#ffa500;" title="Остановка линий">⏸️ Линии</div>
+            <div class="hud-btn-fly" style="cursor:pointer;" title="Центрировать">🚩</div>
+        </div>
+    `;
+    let lyr = document.getElementById('point-hud-layer');
+    if (lyr) lyr.appendChild(htmlHud);
+
+    htmlHud.querySelector('.hud-btn-close-copy').onpointerdown = e => { e.stopPropagation(); htmlHud.remove(); queueRender(); };
+    htmlHud._laserOn = false;
+    htmlHud.querySelector('.hud-btn-laser').onpointerdown = e => { e.stopPropagation(); htmlHud._laserOn = !htmlHud._laserOn; e.target.style.opacity = htmlHud._laserOn ? "1" : "0.5"; queueRender(); };
+    htmlHud.querySelector('.hud-btn-pause-pt').onpointerdown = e => { e.stopPropagation(); pd.paused = !pd.paused; queueRender(); };
+    htmlHud.querySelector('.hud-btn-pause-line').onpointerdown = e => {
+        e.stopPropagation(); pd.linesPaused = !pd.linesPaused;
+        Object.values(state.links).forEach(l => {
+            if (!l) return;
+            if (l.from === pId || l.waypoints?.includes(pId)) l.l1Paused = pd.linesPaused;
+            if (l.to === pId || l.waypoints?.includes(pId)) l.l2Paused = pd.linesPaused;
+        });
+        queueRender();
+    };
+    htmlHud.querySelector('.hud-btn-fly').onpointerdown = e => { e.stopPropagation(); if (window.flyToPoint) window.flyToPoint(pd.x, pd.y); };
+
+    let isDragging = false;
+    let dragDX = 0, dragDY = 0;
+    htmlHud.onpointerdown = e => {
+        if (e.target.className.includes('hud-btn')) return;
+        isDragging = true;
+        let sc = worldContainer.scale.x;
+        dragDX = (e.clientX - worldContainer.x) / sc - hx;
+        dragDY = (e.clientY - worldContainer.y) / sc - hy;
+        htmlHud.setPointerCapture(e.pointerId);
+    };
+    htmlHud.onpointermove = e => {
+        if (!isDragging) return;
+        let sc = worldContainer.scale.x;
+        hx = (e.clientX - worldContainer.x) / sc - dragDX;
+        hy = (e.clientY - worldContainer.y) / sc - dragDY;
+        htmlHud.style.transform = `translate(${hx}px, ${hy}px)`;
+    };
+    htmlHud.onpointerup = htmlHud.onpointercancel = e => {
+        isDragging = false; htmlHud.releasePointerCapture(e.pointerId);
+    };
+
+    if (!window.hudCopies) window.hudCopies = [];
+    window.hudCopies.push({ pId: pId, el: htmlHud });
+    queueRender();
+};
 
 // Properties Panel
 function gP(id) { return document.getElementById(id); }
@@ -2015,25 +2656,31 @@ function selectEntity(type, id, showPanel = false) {
     gP('color-props').style.display = (type === 'main' || type === 'mini') ? 'block' : 'none';
     gP('link-props').style.display = type === 'link' ? 'block' : 'none'; gP('entity-actions').style.display = type === 'link' ? 'none' : 'flex';
     P.nameGrp.style.display = type === 'link' ? 'none' : 'flex';
-    if (type === 'main') { let b = state.bubbles[id]; if (b) {
-        if (P.name) P.name.value = b.name || '';
-        if (P.shape) P.shape.value = b.shape || 'circle';
-        let isC = b.shape === 'circle';
-        if (P.szGrp) P.szGrp.style.display = isC ? '' : 'none';
-        if (P.whGrp) P.whGrp.style.display = isC ? 'none' : '';
-        if (P.size) P.size.value = b.size || 200;
-        if (P.width) P.width.value = _bW(b);
-        if (P.height) P.height.value = _bH(b);
-        if (P.bg) { P.bg.value = b.bgColor || ''; let m = (b.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (m) gP('prop-bg-color-picker').value = '#' + (+m[1]).toString(16).padStart(2, '0') + (+m[2]).toString(16).padStart(2, '0') + (+m[3]).toString(16).padStart(2, '0'); }
-        if (P.border) P.border.value = b.borderColor || ''; if (P.glow) P.glow.value = b.glowColor || ''; } }
-    else if (type === 'mini') { let m = state.minis[id]; if (m) {
-        if (P.name) P.name.value = m.name || '';
-        if (P.miniShape) P.miniShape.value = m.shape || 'pill';
-        if (P.miniRadius) P.miniRadius.value = m.borderRadius != null ? m.borderRadius : 20;
-        if (P.miniW) P.miniW.value = m.w || '';
-        if (P.miniH) P.miniH.value = m.h || '';
-        if (P.bg) { P.bg.value = m.bgColor || ''; let x = (m.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (x) gP('prop-bg-color-picker').value = '#' + (+x[1]).toString(16).padStart(2, '0') + (+x[2]).toString(16).padStart(2, '0') + (+x[3]).toString(16).padStart(2, '0'); }
-        if (P.border) P.border.value = m.borderColor || ''; if (P.glow) P.glow.value = m.glowColor || ''; } }
+    if (type === 'main') {
+        let b = state.bubbles[id]; if (b) {
+            if (P.name) P.name.value = b.name || '';
+            if (P.shape) P.shape.value = b.shape || 'circle';
+            let isC = b.shape === 'circle';
+            if (P.szGrp) P.szGrp.style.display = isC ? '' : 'none';
+            if (P.whGrp) P.whGrp.style.display = isC ? 'none' : '';
+            if (P.size) P.size.value = b.size || 200;
+            if (P.width) P.width.value = _bW(b);
+            if (P.height) P.height.value = _bH(b);
+            if (P.bg) { P.bg.value = b.bgColor || ''; let m = (b.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (m) gP('prop-bg-color-picker').value = '#' + (+m[1]).toString(16).padStart(2, '0') + (+m[2]).toString(16).padStart(2, '0') + (+m[3]).toString(16).padStart(2, '0'); }
+            if (P.border) P.border.value = b.borderColor || ''; if (P.glow) P.glow.value = b.glowColor || '';
+        }
+    }
+    else if (type === 'mini') {
+        let m = state.minis[id]; if (m) {
+            if (P.name) P.name.value = m.name || '';
+            if (P.miniShape) P.miniShape.value = m.shape || 'pill';
+            if (P.miniRadius) P.miniRadius.value = m.borderRadius != null ? m.borderRadius : 20;
+            if (P.miniW) P.miniW.value = m.w || '';
+            if (P.miniH) P.miniH.value = m.h || '';
+            if (P.bg) { P.bg.value = m.bgColor || ''; let x = (m.bgColor || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if (x) gP('prop-bg-color-picker').value = '#' + (+x[1]).toString(16).padStart(2, '0') + (+x[2]).toString(16).padStart(2, '0') + (+x[3]).toString(16).padStart(2, '0'); }
+            if (P.border) P.border.value = m.borderColor || ''; if (P.glow) P.glow.value = m.glowColor || '';
+        }
+    }
     else if (type === 'link') {
         let l = state.links[id]; if (!l) return;
         if (P.lUG) P.lUG.checked = l.useGlobalAnim !== false; gP('prop-link-hidelines').checked = !!l.hideLines;
@@ -2074,7 +2721,7 @@ function U(key, value, fin) {
                 let isC = value === 'circle';
                 if (P.szGrp) P.szGrp.style.display = isC ? '' : 'none';
                 if (P.whGrp) P.whGrp.style.display = isC ? 'none' : '';
-                if (!isC && !target.width)  { target.width  = target.size; if (P.width)  P.width.value  = target.width; }
+                if (!isC && !target.width) { target.width = target.size; if (P.width) P.width.value = target.width; }
                 if (!isC && !target.height) { target.height = target.size; if (P.height) P.height.value = target.height; }
             }
             if (key === 'size' && target.shape === 'circle') {
