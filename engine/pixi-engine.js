@@ -210,7 +210,19 @@ if (!state.cgData) state.cgData = {}; // CG workspaces per bubble
 let defaultLP = { type: 'sharp', lineMode: 'single', color: '#00ffcc' };
 if (!state.points) state.points = {}; if (!state.bubbles) state.bubbles = {}; if (!state.minis) state.minis = {};
 // Expose state access for workspace_engine.js
-window.getBubbleState = () => state;
+window.getBubbleState = () => {
+    state.animTime = animTime;
+    let cleanps = {};
+    for (let l in partSys) {
+        if (partSys[l] && partSys[l].length > 0) {
+            cleanps[l] = partSys[l].map(p => ({
+                t: p.t, speed: p.speed, li: p.li, sym: p.sym, offY: p.offY, tData: p.tData, wpIdx: p.wpIdx
+            }));
+        }
+    }
+    state.partSys = cleanps;
+    return state;
+};
 window.setBubbleState = (s) => {
     state = s;
     if (!state.cgData) state.cgData = {};
@@ -222,7 +234,7 @@ window.setBubbleState = (s) => {
     if (!state.links) state.links = {};
     if (!state.points) state.points = {};
 
-    animTime = 0; // Reset deterministic timer on load
+    animTime = state.animTime !== undefined ? state.animTime : 0; // Sync deterministic timer on load
 
     // Complete history reset based on newly loaded data
     if (typeof stateHistory !== 'undefined') {
@@ -702,7 +714,28 @@ if (stateHistory.length === 0) saveState();
 const ctxMenu = document.getElementById('ctx-menu');
 const pxB = {}, pxM = {}, pxL = {}, pxP = {};
 let partSys = {}, shTex = {};
-window.clearBubblePartSys = () => { partSys = {}; }; // exposed for workspace_engine.js
+window.clearBubblePartSys = () => {
+    if (state.partSys) {
+        partSys = {};
+        for (let l in state.partSys) {
+            partSys[l] = state.partSys[l].map(p => ({ ...p, sprite: null }));
+        }
+    } else {
+        partSys = {};
+    }
+    if (window.hudCopies) { window.hudCopies.forEach(cp => { if (cp.el) cp.el.remove(); }); window.hudCopies = []; }
+    for (let id in pxP) {
+        if (pxP[id]) {
+            if (pxP[id].ctn) pxP[id].ctn.destroy({ children: true });
+            if (pxP[id].htmlHud) pxP[id].htmlHud.remove();
+        }
+        delete pxP[id];
+    }
+    for (let id in pxL) {
+        if (typeof dLC === 'function') dLC(id);
+        delete pxL[id];
+    }
+}; // exposed for workspace_engine.js
 
 // Color utils
 function cHex(s) { if (typeof s !== 'string') return 0xffffff; s = s.trim(); if (s[0] === '#') return parseInt(s.slice(1, 7), 16) || 0xffffff; if (s.startsWith('rgb')) { let m = s.match(/[\d.]+/g); if (m && m.length >= 3) return (parseInt(m[0]) << 16) | (parseInt(m[1]) << 8) | parseInt(m[2]); } return 0xffffff; }
@@ -1381,6 +1414,7 @@ function renderLinks(fullRebuild = true, deltaTimeMs = 16.666) {
             let bg = new PIXI.Graphics(), glow = new PIXI.Graphics(), l1 = new PIXI.Graphics(), l2 = new PIXI.Graphics();
             let hit = new PIXI.Container(); hit.eventMode = 'static'; hit.cursor = 'pointer';
             let lblC = new PIXI.Container(), partC = new PIXI.Container();
+            partC.eventMode = 'none'; partC.interactiveChildren = false;
             layerBg.addChild(bg); layerGlow.addChild(glow); layerLines.addChild(l1); layerLines.addChild(l2); layerHit.addChild(hit);
             layerLbl.addChild(lblC); layerPart.addChild(partC);
             cache = { bg, glow, l1, l2, hit, lblC, partC, sliders: null, lut1: [], lut2: [], pL1: 0, pL2: 0, lblTxt: {}, linkId: link.id, deadSprites: [] }; pxL[link.id] = cache;
@@ -1803,6 +1837,7 @@ function renderLinks(fullRebuild = true, deltaTimeMs = 16.666) {
                     if (mode === 'pixi_symbols') { p.sprite = new PIXI.Sprite(gSymTex(p.sym, r, col)); }
                     else if (mode === 'pixi_energy') { p.sprite = new PIXI.Sprite(gEnTex(col, r)); }
                     else { p.sprite = new PIXI.Sprite(gShTex(cc.shape, col, r)); }
+                    p.sprite.eventMode = 'none';
                     p.sprite.anchor.set(0.5, 0.5); cache.partC.addChild(p.sprite);
                 }
                 p.sprite._tData = p.tData;
