@@ -14,6 +14,7 @@ const CG_CFG = {
   GAP: 24,     // gap between panels at creation (world-px)
   OFFSET_Y: 60,     // distance below parent bubble (world-px)
 };
+let _isRestoringCG = false; // true while restoring from remote sync — prevents saveState loops
 
 const CG_DEFS = [
   { idx: 1, icon: '🎨', name: 'UI Kit', color: '#8b5cf6' },
@@ -311,8 +312,8 @@ function _saveCGLayout() {
       groups: _grpsForBid,
     };
   }
-  // Broadcast state update so observers see new layout
-  typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
+  // Broadcast state update so observers see new layout (skip during restore to avoid loops)
+  if (!_isRestoringCG) typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
 }
 
 // ── Dashboard State Sync (Supabase) ──────────────────────────────
@@ -366,6 +367,7 @@ window.forwardCanvasPan = function (dx, dy) {
 
 window.restoreCGFromState = function () {
   const st = window.getBubbleState(); if (!st?.cgWindows) return;
+  _isRestoringCG = true;
   for (const bid in st.cgWindows) {
     const layout = st.cgWindows[bid];
     if (_cgW.worlds[bid]) continue; // already open
@@ -416,6 +418,7 @@ window.restoreCGFromState = function () {
       }
     }
   }
+  _isRestoringCG = false;
   if (Object.keys(_cgW.worlds).length > 0) { _startLoop(); _updatePositions(); }
 };
 
@@ -462,6 +465,11 @@ function _expandBubbleForCG(bubbleId) {
   const b = st.bubbles?.[bubbleId]; if (!b) return;
   const inst = _cgW.worlds[bubbleId]; if (!inst?.panels?.length) return;
   const PAD = CG_CFG.GAP * 2 || 40;
+
+
+  // Ensure width/height exist (fresh circular bubbles only have .size)
+  if (!b.width) b.width = b.size || 200;
+  if (!b.height) b.height = b.size || 200;
 
   let minAbsX = b.x, minAbsY = b.y;
   let maxAbsX = b.x + b.width, maxAbsY = b.y + b.height;
@@ -514,7 +522,7 @@ function _expandBubbleForCG(bubbleId) {
   b.shape = 'square';
 
   typeof window.queueRender === 'function' && window.queueRender();
-  typeof window.saveState === 'function' && window.saveState();
+  if (!_isRestoringCG) typeof window.saveState === 'function' && window.saveState();
 }
 
 // ── Internal ─────────────────────────────────────────────────────
