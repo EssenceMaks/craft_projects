@@ -41,6 +41,30 @@ let _origRenderCanvas = null;
 // INIT
 // ════════════════════════════════════════════════════════════════
 window.initCloud = function () {
+  const urlParams = new URLSearchParams(window.location.search);
+  const isEmbed = urlParams.get('embed') === '1';
+  const bubbleId = urlParams.get('bubbleId');
+
+  if (isEmbed && bubbleId && window.parent && window.parent.getBubbleState) {
+    const pSt = window.parent.getBubbleState();
+    if (pSt && pSt.cgData && pSt.cgData[bubbleId]) {
+      S.items = JSON.parse(JSON.stringify(pSt.cgData[bubbleId].items || []));
+      S.connections = JSON.parse(JSON.stringify(pSt.cgData[bubbleId].connections || []));
+    }
+
+    if (window.renderCanvas && !_origRenderCanvas) {
+      const orig = window.renderCanvas;
+      window.renderCanvas = function (...args) {
+        orig.apply(this, args);
+        broadcastCanvasUpdate();
+      };
+    }
+
+    if (window.renderUI) window.renderUI();
+    if (window.renderCanvas) window.renderCanvas();
+    return;
+  }
+
   if (typeof supabase === 'undefined') {
     console.warn('[Cloud] supabase-js not loaded');
     return;
@@ -986,6 +1010,18 @@ function applyRemoteCanvas({ items, connections }) {
 
 // ── Broadcast / Apply CSS ────────────────────────────────────
 window.broadcastCss = function (elId, css, isCopy, connId) {
+  const urlParams = new URLSearchParams(window.location.search);
+  const bubbleId = urlParams.get('bubbleId');
+
+  if (bubbleId && window.parent && window.parent !== window) {
+    if (SC.cssThrottle) clearTimeout(SC.cssThrottle);
+    SC.cssThrottle = setTimeout(() => {
+      SC.cssThrottle = null;
+      window.parent.postMessage({ type: 'cg_internal_update', bubbleId, cgData: { items: S.items, connections: S.connections } }, '*');
+    }, 100);
+    return;
+  }
+
   const ch = SC.liveMode ? SC.channel : (SC.watchMode ? SC.watchChannel : null);
   if (!ch) return;
   ch.send({

@@ -601,6 +601,15 @@ function _updatePositions() {
           mini.w = panel.ww; mini.h = panel.wh;
         } else {
           panel.wx = pb.x + mini.x; panel.wy = pb.y + mini.y;
+          if (_cgW.worlds[bid].tabbed && panel === _cgW.worlds[bid].panels[0]) {
+            const GAP = (typeof CG_CFG !== 'undefined' ? CG_CFG.GAP : 20);
+            panel.ww = pb.width - GAP * 2;
+            panel.wh = pb.height - GAP * 2;
+            if (panel.el) {
+              panel.el.style.width = panel.ww + 'px';
+              panel.el.style.height = panel.wh + 'px';
+            }
+          }
         }
       }
       panel.el.style.transform =
