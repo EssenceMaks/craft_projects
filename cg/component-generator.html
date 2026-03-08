@@ -2428,10 +2428,13 @@
 
     document.addEventListener('mousemove', e => {
       if (!isDrag && !isRsz) return;
+
+      const s = typeof localCam !== 'undefined' ? localCam.scale : 1;
+
       if (isDrag) {
         const { id, isCopy, connId } = ds;
         let css = getItemCss(id, isCopy, connId);
-        const dx = e.clientX - ds.dx, dy = e.clientY - ds.dy; ds.dx = e.clientX; ds.dy = e.clientY;
+        const dx = (e.clientX - ds.dx) / s, dy = (e.clientY - ds.dy) / s; ds.dx = e.clientX; ds.dy = e.clientY;
         const nl = parseFloat(getV(css, 'left') || 0) + dx, nt = parseFloat(getV(css, 'top') || 0) + dy;
         css = setCss(css, 'left', nl + 'px'); css = setCss(css, 'top', nt + 'px');
         setItemCss(id, isCopy, connId, css);
@@ -2443,7 +2446,7 @@
       }
       if (isRsz) {
         const { dir, id, sx, sy, sl, st2, sw, sh, isCopy, connId } = rs;
-        const dx = e.clientX - sx, dy = e.clientY - sy;
+        const dx = (e.clientX - sx) / s, dy = (e.clientY - sy) / s;
         let nw = sw, nh = sh, nl = sl, nt = st2;
         if (dir.includes('r')) nw = Math.max(20, sw + dx); if (dir.includes('b')) nh = Math.max(20, sh + dy);
         if (dir.includes('l')) { nw = Math.max(20, sw - dx); nl = sl + (sw - nw); }
@@ -3145,6 +3148,125 @@ ${connections.map(conn => {
         }
       }
     })();
+
+    // ─── LOCAL CANVAS ZOOM & PAN (TAB 3) ───────────────────────
+    let localCam = { x: 0, y: 0, scale: 1 };
+
+    function applyLocalCam() {
+      const cvf = document.getElementById('cvf');
+      if (cvf) cvf.style.transform = `translate(${localCam.x}px, ${localCam.y}px) scale(${localCam.scale})`;
+    }
+
+    // WASD Panning
+    const keys = { w: false, a: false, s: false, d: false };
+    setInterval(() => {
+      if (S.activeTab !== '3') return;
+      let panned = false;
+      const panSpeed = 15;
+      if (keys.w) { localCam.y += panSpeed; panned = true; }
+      if (keys.s) { localCam.y -= panSpeed; panned = true; }
+      if (keys.a) { localCam.x += panSpeed; panned = true; }
+      if (keys.d) { localCam.x -= panSpeed; panned = true; }
+      if (panned) applyLocalCam();
+    }, 16);
+
+    // ─── EVENT FORWARDING TO WORKSPACE ─────────────────────────────
+    ['keydown', 'keyup'].forEach(evName => {
+      window.addEventListener(evName, e => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+
+        let c = e.code;
+        if (evName === 'keydown') {
+          if (c === 'KeyW') keys.w = true;
+          if (c === 'KeyA') keys.a = true;
+          if (c === 'KeyS') keys.s = true;
+          if (c === 'KeyD') keys.d = true;
+        } else {
+          if (c === 'KeyW') keys.w = false;
+          if (c === 'KeyA') keys.a = false;
+          if (c === 'KeyS') keys.s = false;
+          if (c === 'KeyD') keys.d = false;
+        }
+
+        if (e.shiftKey) { // Global fallback
+          window.parent.postMessage({ type: 'cg_input', event: evName, code: e.code, key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey }, '*');
+        }
+      });
+    });
+
+    // MMB / RMB Panning State
+    let isLocalPanning = false;
+
+    window.addEventListener('wheel', e => {
+      if (e.shiftKey) {
+        // Global Zoom
+        e.preventDefault();
+        window.parent.postMessage({ type: 'cg_input', event: 'wheel', deltaY: e.deltaY, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey }, '*');
+      } else {
+        // Local Zoom if over #cw
+        if (S.activeTab === '3' && e.target.closest('#cw')) {
+          e.preventDefault();
+          let zoomIntensity = 0.001;
+          let delta = -e.deltaY;
+          let newScale = Math.min(Math.max(localCam.scale + delta * zoomIntensity, 0.1), 5.0);
+
+          let rect = document.getElementById('cw').getBoundingClientRect();
+          let pointerX = e.clientX - rect.left;
+          let pointerY = e.clientY - rect.top;
+
+          let worldX = (pointerX - localCam.x) / localCam.scale;
+          let worldY = (pointerY - localCam.y) / localCam.scale;
+
+          localCam.scale = newScale;
+          localCam.x = pointerX - worldX * newScale;
+          localCam.y = pointerY - worldY * newScale;
+          applyLocalCam();
+        }
+      }
+    }, { passive: false });
+
+    // We only care about MMB (1) or RMB (2) for panning! Left click (0) is for iframe interaction!
+    window.addEventListener('pointerdown', e => {
+      if (e.button === 1 || e.button === 2) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          window.parent.postMessage({ type: 'cg_input', event: 'pointerdown', button: e.button, clientX: e.clientX, clientY: e.clientY }, '*');
+        } else if (S.activeTab === '3' && e.target.closest('#cw')) {
+          isLocalPanning = true;
+          document.body.style.cursor = 'grabbing';
+        }
+      }
+    });
+
+    window.addEventListener('pointermove', e => {
+      if (isLocalPanning) {
+        localCam.x += e.movementX;
+        localCam.y += e.movementY;
+        applyLocalCam();
+      } else {
+        // Forward movement for global events or tracking
+        window.parent.postMessage({ type: 'cg_input', event: 'pointermove', button: e.button, clientX: e.clientX, clientY: e.clientY }, '*');
+      }
+    });
+
+    window.addEventListener('pointerup', e => {
+      if (e.button === 1 || e.button === 2) {
+        if (isLocalPanning) {
+          isLocalPanning = false;
+          document.body.style.cursor = 'default';
+        } else {
+          window.parent.postMessage({ type: 'cg_input', event: 'pointerup', button: e.button, clientX: e.clientX, clientY: e.clientY }, '*');
+        }
+      }
+    });
+
+    window.addEventListener('contextmenu', e => {
+      if (S.activeTab === '3' && e.target.closest('#cw')) {
+        e.preventDefault(); // prevent native right-click for local panning
+      } else if (!e.shiftKey) {
+        e.preventDefault(); // prevent for general app behavior
+      }
+    });
   </script>
 
   <!-- ══ LOGIN MODAL ══════════════════════════════════════════ -->

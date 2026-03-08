@@ -703,6 +703,7 @@ function _makeResizable(resizer, panel, panelEl) {
 
 // ── Wheel passthrough to pixi-canvas (for header/border area) ────
 function _forwardWheelToCanvas(e) {
+  if (!e.shiftKey) return; // ONLY forward zoom if Shift is held (to avoid Chrome shortcuts)
   const cv = document.getElementById('pixi-canvas'); if (!cv) return;
   cv.dispatchEvent(new WheelEvent('wheel', {
     bubbles: true, cancelable: true,
@@ -1408,6 +1409,30 @@ window.addEventListener('message', e => {
     st.cgData[e.data.bubbleId] = e.data.cgData;
     if (typeof window.broadcastCGUpdate === 'function') {
       window.broadcastCGUpdate(e.data.bubbleId);
+    }
+  }
+
+  if (e.data && e.data.type === 'cg_input') {
+    let clientX = e.data.clientX || 0;
+    let clientY = e.data.clientY || 0;
+
+    // Offset the coords from inside the iframe to absolute screen coords
+    document.querySelectorAll('iframe').forEach(ifr => {
+      if (ifr.contentWindow === e.source) {
+        const rect = ifr.getBoundingClientRect();
+        clientX += rect.left;
+        clientY += rect.top;
+      }
+    });
+
+    if (e.data.event === 'wheel') {
+      const cv = document.getElementById('pixi-canvas');
+      if (cv) cv.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: e.data.deltaY, clientX, clientY, shiftKey: e.data.shiftKey, ctrlKey: e.data.ctrlKey, altKey: e.data.altKey }));
+    } else if (e.data.event === 'keydown' || e.data.event === 'keyup') {
+      window.dispatchEvent(new KeyboardEvent(e.data.event, { bubbles: true, cancelable: true, code: e.data.code, key: e.data.key, shiftKey: e.data.shiftKey, ctrlKey: e.data.ctrlKey, altKey: e.data.altKey }));
+    } else if (e.data.event.startsWith('pointer')) {
+      const cv = document.getElementById('pixi-canvas');
+      if (cv) cv.dispatchEvent(new PointerEvent(e.data.event, { bubbles: true, cancelable: true, button: e.data.button, clientX, clientY }));
     }
   }
 });

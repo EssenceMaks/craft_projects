@@ -751,31 +751,55 @@ function gEnTex(col, sz) { let r = Math.max(4, Math.round(sz)); let k = `e_${col
 function gSymTex(sym, r, col) { let rSz = Math.max(4, Math.round(r)); let k = `s_${sym}_${rSz}_${col}`; if (shTex[k]) return shTex[k]; let tOpt = new PIXI.Text(sym, { fontFamily: 'Segoe UI Emoji, Arial', fontSize: Math.max(12, rSz * 3 + 8), fill: cHex(col) }); let t = app.renderer.generateTexture(tOpt, { resolution: 2 }); tOpt.destroy(true); shTex[k] = t; return t; }
 
 // Math
-function resolveCollisions(mid, vis = new Set()) {
-    let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid);
-    let mw = _bW(mv), mh = _bH(mv); let mcx = mv.x + mw / 2, mcy = mv.y + mh / 2;
-    for (let id in state.bubbles) {
-        if (id === mid) continue;
-        let t = state.bubbles[id]; if (!t) continue;
-        let tw = _bW(t), th = _bH(t); let tcx = t.x + tw / 2, tcy = t.y + th / 2;
-        let dx = tcx - mcx, dy = tcy - mcy;
-        if (mv.shape === 'circle' && t.shape === 'circle') {
-            let mr = mw / 2, tr = tw / 2, d = Math.hypot(dx, dy), minD = mr + tr + 20;
-            if (d < minD) {
-                if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); }
-                let a = Math.atan2(dy, dx), p = minD - d;
-                t.x += Math.cos(a) * p; t.y += Math.sin(a) * p;
-                resolveCollisions(id, vis);
-            }
-        } else {
-            let minX = (mw / 2) + (tw / 2) + 40, minY = (mh / 2) + (th / 2) + 40;
-            if (Math.abs(dx) < minX && Math.abs(dy) < minY) {
-                if (dx === 0 && dy === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; }
-                let ox = minX - Math.abs(dx), oy = minY - Math.abs(dy);
-                if (ox < oy) t.x += Math.sign(dx) * ox; else t.y += Math.sign(dy) * oy;
-                resolveCollisions(id, vis);
+function resolveCollisions(startMid) {
+    const MAX_PASSES = 5;
+    let bIds = Object.keys(state.bubbles).filter(id => state.bubbles[id]);
+    if (bIds.length <= 1) return;
+
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+        let moved = false;
+        for (let i = 0; i < bIds.length; i++) {
+            let id1 = bIds[i];
+            let b1 = state.bubbles[id1];
+            let w1 = _bW(b1), h1 = _bH(b1);
+            let cx1 = b1.x + w1 / 2, cy1 = b1.y + h1 / 2;
+
+            for (let j = i + 1; j < bIds.length; j++) {
+                let id2 = bIds[j];
+                let b2 = state.bubbles[id2];
+                let w2 = _bW(b2), h2 = _bH(b2);
+                let cx2 = b2.x + w2 / 2, cy2 = b2.y + h2 / 2;
+
+                let dx = cx2 - cx1, dy = cy2 - cy1;
+
+                if (b1.shape === 'circle' && b2.shape === 'circle') {
+                    let r1 = w1 / 2, r2 = w2 / 2, d = Math.hypot(dx, dy), minD = r1 + r2 + 20;
+                    if (d < minD) {
+                        if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); }
+                        let push = (minD - d) / 2;
+                        let px = (dx / d) * push, py = (dy / d) * push;
+                        b1.x -= px; b1.y -= py;
+                        b2.x += px; b2.y += py;
+                        moved = true;
+                    }
+                } else {
+                    let minX = (w1 / 2) + (w2 / 2) + 40, minY = (h1 / 2) + (h2 / 2) + 40;
+                    if (Math.abs(dx) < minX && Math.abs(dy) < minY) {
+                        if (dx === 0 && dy === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; }
+                        let ox = minX - Math.abs(dx), oy = minY - Math.abs(dy);
+                        if (ox < oy) {
+                            let push = ox / 2 * Math.sign(dx);
+                            b1.x -= push; b2.x += push;
+                        } else {
+                            let push = oy / 2 * Math.sign(dy);
+                            b1.y -= push; b2.y += push;
+                        }
+                        moved = true;
+                    }
+                }
             }
         }
+        if (!moved) break;
     }
 }
 
@@ -925,7 +949,11 @@ function createBAP(pId) {
 function addLTL(linkId) { let l = state.links[linkId]; if (!l) return; if (!l.labels) l.labels = []; l.labels.push({ id: 'lbl_' + generateId(), text: 'Связь', type: 'callout', offset: 0.5 }); selectEntity('link', linkId); queueRender(); saveState(); }
 
 // Full rebuild after undo/redo
-function fullRebuild() { for (let id in pxB) { if (pxB[id]._edgeTmr) { clearTimeout(pxB[id]._edgeTmr); pxB[id]._edgeTmr = null; } if (!pxB[id].c.destroyed) pxB[id].c.destroy({ children: true }); delete pxB[id]; } for (let id in pxM) { if (!pxM[id].c.destroyed) pxM[id].c.destroy({ children: true }); delete pxM[id]; } for (let id in pxL) { dLC(id); } for (let id in pxP) { if (!pxP[id].ctn.destroyed) pxP[id].ctn.destroy({ children: true }); delete pxP[id]; } for (let id in partSys) { partSys[id].forEach(p => { if (p.sprite && !p.sprite.destroyed) p.sprite.destroy(); }); delete partSys[id]; } needsRender = true; }
+function fullRebuild() {
+    // Instead of destroying all objects, simply flag everything for an update
+    // The render cycle will naturally garbage collect missing state entities.
+    needsRender = true;
+}
 function dLC(id) { let c = pxL[id]; if (!c) return; if (!c.bg.destroyed) c.bg.destroy(); if (!c.glow.destroyed) c.glow.destroy(); if (!c.l1.destroyed) c.l1.destroy(); if (!c.l2.destroyed) c.l2.destroy(); if (!c.hit.destroyed) c.hit.destroy({ children: true }); if (!c.lblC.destroyed) c.lblC.destroy({ children: true }); if (!c.partC.destroyed) c.partC.destroy({ children: true }); if (c.deadSprites) { c.deadSprites.forEach(s => { if (!s.destroyed) s.destroy(); }); c.deadSprites = []; } delete pxL[id]; }
 
 // Line Creation Mode functions
@@ -2566,20 +2594,18 @@ app.ticker.add(delta => {
 
     // Edge Panning
     let edgeThreshold = 30; // pixels from edge
-    if (!cam.isPanningMMB && !dragState && !selectedEntity && !window._isOverCG) { // Avoid panning while dragging objects or over CG UI
+    if (!cam.isPanningMMB && !dragState && !selectedEntity && !window._isOverCG) { // Avoid edge panning over UI
         if (globalMouse.x < edgeThreshold) { worldContainer.x += panSpeed; isPanning = true; }
         if (globalMouse.x > innerWidth - edgeThreshold) { worldContainer.x -= panSpeed; isPanning = true; }
         if (globalMouse.y < edgeThreshold) { worldContainer.y += panSpeed; isPanning = true; }
         if (globalMouse.y > innerHeight - edgeThreshold) { worldContainer.y -= panSpeed; isPanning = true; }
     }
 
-    // WASD Panning
-    if (!window._isOverCG) {
-        if (keys.w) { worldContainer.y += panSpeed; isPanning = true; }
-        if (keys.s) { worldContainer.y -= panSpeed; isPanning = true; }
-        if (keys.a) { worldContainer.x += panSpeed; isPanning = true; }
-        if (keys.d) { worldContainer.x -= panSpeed; isPanning = true; }
-    }
+    // WASD Panning (always allowed to pan keyboard even if mouse is over CG)
+    if (keys.w) { worldContainer.y += panSpeed; isPanning = true; }
+    if (keys.s) { worldContainer.y -= panSpeed; isPanning = true; }
+    if (keys.a) { worldContainer.x += panSpeed; isPanning = true; }
+    if (keys.d) { worldContainer.x -= panSpeed; isPanning = true; }
 
     if (isPanning) {
         if (typeof applyCameraBounds === 'function') applyCameraBounds();
