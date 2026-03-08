@@ -178,8 +178,27 @@
       <input type="file" id="file-load" accept=".json" style="display:none;">
       <button id="btn-save" style="background:#2a7d43;padding:8px;" title="Сохранить JSON">💾</button>
       <button id="btn-toggle-minimap" class="icon-btn" title="Миникарта (M)" style="font-size:16px;">🗺️</button>
-      <button id="btn-camera-mode" class="icon-btn" style="width:auto;padding:0 8px;font-size:12px;margin-left:5px;">🎥
-        Ограничена</button>
+      <div style="display:flex;flex-direction:column;gap:5px;margin-left:5px;">
+        <button id="btn-camera-mode" class="icon-btn" style="width:100%;padding:2px 8px;font-size:11px;">🎥
+          Ограничена</button>
+        <div
+          style="display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.2);padding:2px 5px;border-radius:4px;border:1px solid rgba(255,255,255,0.05);">
+          <button id="btn-zoom-out" class="icon-btn" style="padding:0 4px;font-size:14px;border-radius:3px;"
+            title="Отдалить">-</button>
+          <input type="range" id="cam-zoom-slider" min="0.05" max="5.0" step="0.05" value="1"
+            style="width:60px;height:4px;accent-color:#00ffcc;cursor:pointer;" title="Масштаб Камеры">
+          <button id="btn-zoom-in" class="icon-btn" style="padding:0 4px;font-size:12px;border-radius:3px;"
+            title="Приблизить">+</button>
+          <div
+            style="display:flex;align-items:center;gap:2px;border-left:1px solid rgba(255,255,255,0.1);padding-left:4px;margin-left:2px;"
+            title="Шаг скролла мыши (%)">
+            <span style="font-size:9px;color:#a0aabf;">Шаг</span>
+            <input type="number" id="cam-zoom-step" value="100" min="10" max="500" step="10"
+              style="width:36px;font-size:9px;padding:1px;background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:2px;text-align:center;">
+            <span style="font-size:9px;color:#a0aabf;">%</span>
+          </div>
+        </div>
+      </div>
     </div>
     <div id="tb-collapse"
       style="padding:0 10px;cursor:pointer;opacity:.8;font-size:14px;display:flex;align-items:center;" title="Свернуть">

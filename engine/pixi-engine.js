@@ -169,8 +169,11 @@ window.addEventListener('wheel', e => {
     e.preventDefault();
     if (dragState || cam.isPanningMMB) return;
 
-    // Zoom factor
-    let zoomIntensity = 0.001;
+    // Zoom factor with user sensitivity
+    let stepInput = document.getElementById('cam-zoom-step');
+    let sensitivity = stepInput ? (parseInt(stepInput.value) || 100) / 100 : 1;
+    let zoomIntensity = 0.001 * sensitivity;
+
     let delta = -e.deltaY;
     let newScale = Math.min(Math.max(worldContainer.scale.x + delta * zoomIntensity, ZOOM_MIN), ZOOM_MAX);
 
@@ -185,6 +188,10 @@ window.addEventListener('wheel', e => {
     // Apply new scale
     worldContainer.scale.set(newScale);
 
+    // Synchronize UI Slider
+    let slider = document.getElementById('cam-zoom-slider');
+    if (slider) slider.value = newScale;
+
     // Reposition world container so cursor is in the same world position
     worldContainer.x = pointerX - worldX * newScale;
     worldContainer.y = pointerY - worldY * newScale;
@@ -194,6 +201,51 @@ window.addEventListener('wheel', e => {
 
     queueCameraUpdate();
 }, { passive: false });
+
+// Global Zoom UI Binds
+setTimeout(() => {
+    const zs = document.getElementById('cam-zoom-slider');
+    const zi = document.getElementById('btn-zoom-in');
+    const zo = document.getElementById('btn-zoom-out');
+
+    function applyManualZoom(newScale) {
+        if (!currentUser) return;
+        newScale = Math.min(Math.max(newScale, ZOOM_MIN), ZOOM_MAX);
+
+        let pointerX = innerWidth / 2;
+        let pointerY = innerHeight / 2;
+        let worldX = (pointerX - worldContainer.x) / worldContainer.scale.x;
+        let worldY = (pointerY - worldContainer.y) / worldContainer.scale.y;
+
+        worldContainer.scale.set(newScale);
+        if (zs) zs.value = newScale;
+
+        worldContainer.x = pointerX - worldX * newScale;
+        worldContainer.y = pointerY - worldY * newScale;
+
+        if (typeof applyCameraBounds === 'function') applyCameraBounds();
+        queueCameraUpdate();
+        queueRender();
+    }
+
+    if (zs) {
+        zs.addEventListener('input', e => {
+            applyManualZoom(parseFloat(e.target.value));
+        });
+    }
+    if (zi) {
+        zi.addEventListener('click', () => {
+            let cur = parseFloat(zs ? zs.value : worldContainer.scale.x);
+            applyManualZoom(cur + 0.1);
+        });
+    }
+    if (zo) {
+        zo.addEventListener('click', () => {
+            let cur = parseFloat(zs ? zs.value : worldContainer.scale.x);
+            applyManualZoom(cur - 0.1);
+        });
+    }
+}, 500);
 
 // Global Pointer tracking for Edge Panning
 let globalMouse = { x: innerWidth / 2, y: innerHeight / 2 };
