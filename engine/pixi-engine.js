@@ -143,7 +143,7 @@ window.requestAnimationFrame = window.requestAnimationFrame || window.webkitRequ
 const keys = { w: false, a: false, s: false, d: false };
 window.addEventListener('keydown', e => {
     if (!currentUser) return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable || e.target.tagName === 'IFRAME') return;
     let c = e.code;
     if (c === 'KeyW') keys.w = true;
     if (c === 'KeyA') keys.a = true;
@@ -751,7 +751,7 @@ function gEnTex(col, sz) { let r = Math.max(4, Math.round(sz)); let k = `e_${col
 function gSymTex(sym, r, col) { let rSz = Math.max(4, Math.round(r)); let k = `s_${sym}_${rSz}_${col}`; if (shTex[k]) return shTex[k]; let tOpt = new PIXI.Text(sym, { fontFamily: 'Segoe UI Emoji, Arial', fontSize: Math.max(12, rSz * 3 + 8), fill: cHex(col) }); let t = app.renderer.generateTexture(tOpt, { resolution: 2 }); tOpt.destroy(true); shTex[k] = t; return t; }
 
 // Math
-function resolveCollisions(mid, vis = new Set()) { let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid); let mcx = mv.x + mv.size / 2, mcy = mv.y + mv.size / 2, mr = mv.size / 2; for (let id in state.bubbles) { if (id === mid) continue; let t = state.bubbles[id]; if (!t) continue; let tcx = t.x + t.size / 2, tcy = t.y + t.size / 2, tr = t.size / 2, dx = tcx - mcx, dy = tcy - mcy, d = Math.hypot(dx, dy), minD = mr + tr + 20; if (d < minD) { if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); } let a = Math.atan2(dy, dx), p = minD - d; t.x += Math.cos(a) * p; t.y += Math.sin(a) * p; t.x = Math.max(0, Math.min(innerWidth - t.size, t.x)); t.y = Math.max(0, Math.min(innerHeight - t.size, t.y)); resolveCollisions(id, vis); } } }
+function resolveCollisions(mid, vis = new Set()) { let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid); let mw = _bW(mv), mh = _bH(mv); let mcx = mv.x + mw / 2, mcy = mv.y + mh / 2, mr = Math.max(mw, mh) / 2; for (let id in state.bubbles) { if (id === mid) continue; let t = state.bubbles[id]; if (!t) continue; let tw = _bW(t), th = _bH(t); let tcx = t.x + tw / 2, tcy = t.y + th / 2, tr = Math.max(tw, th) / 2, dx = tcx - mcx, dy = tcy - mcy, d = Math.hypot(dx, dy), minD = mr + tr + 20; if (d < minD) { if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); } let a = Math.atan2(dy, dx), p = minD - d; t.x += Math.cos(a) * p; t.y += Math.sin(a) * p; resolveCollisions(id, vis); } } }
 
 const _bW = b => b.width || b.size;
 const _bH = b => b.height || b.size;
@@ -2366,9 +2366,9 @@ document.addEventListener('mousemove', e => {
         if (dragState.isNew && Math.hypot(e.clientX - dragState.sX, e.clientY - dragState.sY) > 5) dragState.isNew = false;
         let pId = dragState.id, mx = mp.x, my = mp.y, sn = null, sR = 30 * invS, mS = Infinity;
         const chk = (id, cx, cy, type, angle, pri) => { let d = Math.hypot(cx - mx, cy - my); if (d < sR) { let sc = d - pri * 1000; if (sc < mS) { mS = sc; sn = { id, type, angle }; } } };
-        for (let id in state.bubbles) { let b = state.bubbles[id]; if (b) chk(id, b.x + b.size / 2, b.y + b.size / 2, 'center', null, 1); }
+        for (let id in state.bubbles) { let b = state.bubbles[id]; if (b) { let bw = _bW(b), bh = _bH(b); chk(id, b.x + bw / 2, b.y + bh / 2, 'center', null, 1); } }
         for (let id in state.minis) { let c = getBC(id); if (c) chk(id, c.x, c.y, 'center', null, 1); }
-        for (let id in state.bubbles) { let b = state.bubbles[id]; if (!b) continue; let c = { x: b.x + b.size / 2, y: b.y + b.size / 2, rect: { width: b.size, height: b.size } }; let a = Math.atan2(my - c.y, mx - c.x), ep = getEI(id, c, c.x + Math.cos(a) * 1000, c.y + Math.sin(a) * 1000); chk(id, ep.x, ep.y, 'contour', a, 0); }
+        for (let id in state.bubbles) { let b = state.bubbles[id]; if (!b) continue; let bw = _bW(b), bh = _bH(b); let c = { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; let a = Math.atan2(my - c.y, mx - c.x), ep = getEI(id, c, c.x + Math.cos(a) * 1000, c.y + Math.sin(a) * 1000); chk(id, ep.x, ep.y, 'contour', a, 0); }
         for (let id in pxP) { if (id !== pId && pxP[id]) chk(id, pxP[id].g.position.x, pxP[id].g.position.y, 'point', null, 3); }
         dragState.sn = sn;
         if (sn) {
@@ -2540,7 +2540,7 @@ app.ticker.add(delta => {
 
     // Edge Panning
     let edgeThreshold = 30; // pixels from edge
-    if (!cam.isPanningMMB && !dragState && !selectedEntity) { // Avoid panning while dragging objects
+    if (!cam.isPanningMMB && !dragState && !selectedEntity && !window._isOverCG) { // Avoid panning while dragging objects or over CG UI
         if (globalMouse.x < edgeThreshold) { worldContainer.x += panSpeed; isPanning = true; }
         if (globalMouse.x > innerWidth - edgeThreshold) { worldContainer.x -= panSpeed; isPanning = true; }
         if (globalMouse.y < edgeThreshold) { worldContainer.y += panSpeed; isPanning = true; }
@@ -2548,10 +2548,12 @@ app.ticker.add(delta => {
     }
 
     // WASD Panning
-    if (keys.w) { worldContainer.y += panSpeed; isPanning = true; }
-    if (keys.s) { worldContainer.y -= panSpeed; isPanning = true; }
-    if (keys.a) { worldContainer.x += panSpeed; isPanning = true; }
-    if (keys.d) { worldContainer.x -= panSpeed; isPanning = true; }
+    if (!window._isOverCG) {
+        if (keys.w) { worldContainer.y += panSpeed; isPanning = true; }
+        if (keys.s) { worldContainer.y -= panSpeed; isPanning = true; }
+        if (keys.a) { worldContainer.x += panSpeed; isPanning = true; }
+        if (keys.d) { worldContainer.x -= panSpeed; isPanning = true; }
+    }
 
     if (isPanning) {
         if (typeof applyCameraBounds === 'function') applyCameraBounds();

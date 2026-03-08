@@ -180,11 +180,12 @@ function _createCGTabbed(bubbleId) {
   const layer = _getLayer();
   const inst = { bubbleId, panels: [], tabbed: true };
   const PAD = CG_CFG.GAP;
-  const totalW = CG_CFG.MINI_W;
+  const totalW = 1800; // Dashboard width
+  const totalH = 1000; // Dashboard height
   const panel = {
     wx: b.x + PAD,
     wy: b.y + PAD,
-    ww: totalW, wh: CG_CFG.MINI_H, el: null, bubbleId,
+    ww: totalW, wh: totalH, el: null, bubbleId,
   };
   const panelEl = document.createElement('div');
   panelEl.setAttribute('data-cg-panel', '1');
@@ -194,32 +195,31 @@ function _createCGTabbed(bubbleId) {
     `border-radius:14px;overflow:hidden;border:2px solid rgba(0,255,204,.3);` +
     `box-shadow:0 16px 56px rgba(0,0,0,.75);background:#0b0d17;pointer-events:auto;`;
   panel.el = panelEl;
-  // Tab bar
-  const tabBar = document.createElement('div');
-  tabBar.style.cssText =
+
+  // Dashboard Header
+  const hdr = document.createElement('div');
+  hdr.style.cssText =
     `display:flex;align-items:center;background:rgba(0,0,0,.4);` +
-    `border-bottom:1px solid rgba(0,255,204,.2);flex-shrink:0;height:${CG_CFG.HEADER_H}px;cursor:grab;`;
-  CG_DEFS.forEach((tab, i) => {
-    const tb = document.createElement('button');
-    tb.textContent = `${tab.icon} ${tab.name}`;
-    tb.style.cssText =
-      `border:none;background:${i === 0 ? tab.color + '33' : 'transparent'};` +
-      `color:${i === 0 ? tab.color : '#7a8599'};padding:0 16px;height:100%;cursor:pointer;` +
-      `font-size:12px;font-weight:700;border-right:1px solid rgba(255,255,255,.07);`;
-    tb.dataset.idx = i;
-    tabBar.appendChild(tb);
-  });
-  const closeBtnT = document.createElement('button');
-  closeBtnT.className = 'cgw-close';
-  closeBtnT.style.cssText =
-    `margin-left:auto;background:none;border:none;color:#7a8599;cursor:pointer;font-size:16px;padding:0 12px;`;
-  closeBtnT.textContent = '✕';
-  tabBar.appendChild(closeBtnT);
+    `border-bottom:1px solid rgba(0,255,204,.2);flex-shrink:0;height:${CG_CFG.HEADER_H}px;cursor:grab;padding:0 16px;`;
+
+  const title = document.createElement('div');
+  title.style.cssText = `color:#fff;font-size:14px;font-weight:700;flex:1;`;
+  title.textContent = '🧩 Component Generator Dashboard';
+  hdr.appendChild(title);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'cgw-close';
+  closeBtn.style.cssText =
+    `margin-left:auto;background:none;border:none;color:#7a8599;cursor:pointer;font-size:16px;padding:0;`;
+  closeBtn.textContent = '✕';
+  hdr.appendChild(closeBtn);
+
   // Iframe
   const iframe = document.createElement('iframe');
-  iframe.src = `cg/component-generator.html?tab=1&embed=1`;
+  iframe.src = `cg/component-generator.html?tab=1&embed=1&v=${Date.now()}`;
   iframe.style.cssText = `flex:1;border:none;width:100%;display:block;`;
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
+
   // Resize handle
   const resizer = document.createElement('div');
   resizer.style.cssText =
@@ -227,27 +227,20 @@ function _createCGTabbed(bubbleId) {
     `display:flex;align-items:center;justify-content:center;color:#7a8599;font-size:14px;` +
     `user-select:none;z-index:10;background:rgba(0,0,0,.35);border-top-left-radius:8px;`;
   resizer.textContent = '◢';
-  panelEl.appendChild(tabBar); panelEl.appendChild(iframe); panelEl.appendChild(resizer);
+
+  panelEl.appendChild(hdr);
+  panelEl.appendChild(iframe);
+  panelEl.appendChild(resizer);
   layer.appendChild(panelEl);
-  // Tab switching
-  tabBar.querySelectorAll('button[data-idx]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const i = +btn.dataset.idx;
-      if (iframe.contentWindow && typeof iframe.contentWindow.switchTab === 'function') {
-        iframe.contentWindow.switchTab(CG_DEFS[i].idx.toString());
-      } else {
-        iframe.src = `cg/component-generator.html?tab=${CG_DEFS[i].idx}&embed=1`;
-      }
-      tabBar.querySelectorAll('button[data-idx]').forEach((b2, j) => {
-        b2.style.background = j === i ? CG_DEFS[j].color + '33' : 'transparent';
-        b2.style.color = j === i ? CG_DEFS[j].color : '#7a8599';
-      });
-    });
-  });
-  closeBtnT.addEventListener('click', ev => { ev.stopPropagation(); _destroyCGWorld(bubbleId); });
-  _makeDraggable(tabBar, panel);
+
+  panelEl.addEventListener('mouseenter', () => { window._isOverCG = true; });
+  panelEl.addEventListener('mouseleave', () => { window._isOverCG = false; });
+
+  closeBtn.addEventListener('click', ev => { ev.stopPropagation(); _destroyCGWorld(bubbleId); });
+
+  _makeDraggable(hdr, panel);
   _makeResizable(resizer, panel, panelEl);
-  _makePinBtn(tabBar, panel);
+  _makePinBtn(hdr, panel);
   panelEl.addEventListener('wheel', e => {
     if (e.target === iframe) return;
     e.preventDefault(); e.stopPropagation(); _forwardWheelToCanvas(e);
@@ -322,6 +315,55 @@ function _saveCGLayout() {
   typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
 }
 
+// ── Dashboard State Sync (Supabase) ──────────────────────────────
+window.saveCgDashboardState = function (iframeWin, dashboardState) {
+  let bid = null;
+  for (const b in _cgW.worlds) {
+    const inst = _cgW.worlds[b];
+    if (inst.panels[0] && inst.panels[0].el) {
+      const iframe = inst.panels[0].el.querySelector('iframe');
+      if (iframe && iframe.contentWindow === iframeWin) {
+        bid = b; break;
+      }
+    }
+  }
+  if (!bid) return;
+  const st = window.getBubbleState(); if (!st) return;
+  if (!st.cgWindows) st.cgWindows = {};
+  if (!st.cgWindows[bid]) st.cgWindows[bid] = {};
+  st.cgWindows[bid].dashboardLayout = dashboardState;
+  typeof window.saveState === 'function' && window.saveState();
+  typeof window.broadcastCanvasUpdate === 'function' && window.broadcastCanvasUpdate();
+};
+
+window.requestCgDashboardState = function (iframeWin) {
+  let bid = null;
+  for (const b in _cgW.worlds) {
+    const inst = _cgW.worlds[b];
+    if (inst.panels[0] && inst.panels[0].el) {
+      const iframe = inst.panels[0].el.querySelector('iframe');
+      if (iframe && iframe.contentWindow === iframeWin) {
+        bid = b; break;
+      }
+    }
+  }
+  const st = window.getBubbleState();
+  if (bid && st && st.cgWindows && st.cgWindows[bid] && st.cgWindows[bid].dashboardLayout) {
+    return JSON.parse(JSON.stringify(st.cgWindows[bid].dashboardLayout));
+  }
+  return null;
+};
+
+// ── Camera Panning Forwarder (Ctrl+E/T from iframe) ──────────────
+window.forwardCanvasPan = function (dx, dy) {
+  const wc = window.worldContainer;
+  if (!wc) return;
+  wc.x += dx;
+  wc.y += dy;
+  if (typeof applyCameraBounds === 'function') applyCameraBounds();
+  if (typeof queueRender === 'function') queueRender();
+};
+
 window.restoreCGFromState = function () {
   const st = window.getBubbleState(); if (!st?.cgWindows) return;
   for (const bid in st.cgWindows) {
@@ -339,9 +381,10 @@ window.restoreCGFromState = function () {
       panel.wx = layout.panels[i].wx; panel.wy = layout.panels[i].wy;
       panel.ww = layout.panels[i].ww; panel.wh = layout.panels[i].wh;
 
-      // Sanity check for old saves that had the 6000px bug
-      if (layout.tabbed && panel.ww > 2000) {
-        panel.ww = CG_CFG.MINI_W || 1200;
+      // Sanity check for old saves that had the 6000px bug. We raised it to >5000 since dashboards are wide.
+      if (layout.tabbed && panel.ww > 5000) {
+        panel.ww = 1800;
+        panel.wh = 1000;
       }
 
       if (panel.el) {
@@ -364,7 +407,6 @@ window.restoreCGFromState = function () {
           p.groupId = gid; p.wx = group.wx; p.wy = group.wy; p.ww = group.ww; p.wh = group.wh;
           if (p.el) {
             p.el.style.width = p.ww + 'px'; p.el.style.height = p.wh + 'px';
-            p.el.style.display = i === group.activeIdx ? 'flex' : 'none';
             const hdr = p.el.querySelector('.cgw-hdr'); if (hdr) hdr.style.display = 'none';
           }
         });
@@ -419,15 +461,58 @@ function _expandBubbleForCG(bubbleId) {
   const st = window.getBubbleState(); if (!st) return;
   const b = st.bubbles?.[bubbleId]; if (!b) return;
   const inst = _cgW.worlds[bubbleId]; if (!inst?.panels?.length) return;
-  const PAD = CG_CFG.GAP * 2;
-  let maxX = 0, maxY = 0;
+  const PAD = CG_CFG.GAP * 2 || 40;
+
+  let minAbsX = b.x, minAbsY = b.y;
+  let maxAbsX = b.x + b.width, maxAbsY = b.y + b.height;
+
   inst.panels.forEach(p => {
-    maxX = Math.max(maxX, (p.wx - b.x) + p.ww);
-    maxY = Math.max(maxY, (p.wy - b.y) + p.wh);
+    if (p.wx < minAbsX) minAbsX = p.wx;
+    if (p.wy < minAbsY) minAbsY = p.wy;
+    if (p.wx + p.ww > maxAbsX) maxAbsX = p.wx + p.ww;
+    if (p.wy + p.wh > maxAbsY) maxAbsY = p.wy + p.wh;
   });
+
+  const diffLeft = b.x - (minAbsX - PAD);
+  const diffTop = b.y - (minAbsY - PAD);
+
+  if (diffLeft > 0) {
+    b.x -= diffLeft;
+    b.width += diffLeft;
+    for (const mid in st.minis) {
+      if (st.minis[mid].parentId === bubbleId) st.minis[mid].x += diffLeft;
+    }
+    for (const tid in st.tokens) {
+      if (st.tokens[tid].pinnedTo === bubbleId && st.tokens[tid].pinPos) st.tokens[tid].pinPos.x += diffLeft;
+    }
+    for (const lid in st.lines) {
+      if (st.lines[lid].fromId === bubbleId && st.lines[lid].fromOffset) st.lines[lid].fromOffset.x += diffLeft;
+      if (st.lines[lid].toId === bubbleId && st.lines[lid].toOffset) st.lines[lid].toOffset.x += diffLeft;
+    }
+  }
+
+  if (diffTop > 0) {
+    b.y -= diffTop;
+    b.height += diffTop;
+    for (const mid in st.minis) {
+      if (st.minis[mid].parentId === bubbleId) st.minis[mid].y += diffTop;
+    }
+    for (const tid in st.tokens) {
+      if (st.tokens[tid].pinnedTo === bubbleId && st.tokens[tid].pinPos) st.tokens[tid].pinPos.y += diffTop;
+    }
+    for (const lid in st.lines) {
+      if (st.lines[lid].fromId === bubbleId && st.lines[lid].fromOffset) st.lines[lid].fromOffset.y += diffTop;
+      if (st.lines[lid].toId === bubbleId && st.lines[lid].toOffset) st.lines[lid].toOffset.y += diffTop;
+    }
+  }
+
+  const newW = (maxAbsX + PAD) - b.x;
+  const newH = (maxAbsY + PAD) - b.y;
+  if (newW > b.width) b.width = newW;
+  if (newH > b.height) b.height = newH;
+
   b.shape = 'square';
-  b.width = maxX + PAD;
-  b.height = maxY + PAD;
+
   typeof window.queueRender === 'function' && window.queueRender();
   typeof window.saveState === 'function' && window.saveState();
 }
