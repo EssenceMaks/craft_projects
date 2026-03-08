@@ -478,6 +478,20 @@ function _expandBubbleForCG(bubbleId) {
   const inst = _cgW.worlds[bubbleId]; if (!inst?.panels?.length) return;
   const PAD = CG_CFG.GAP * 2 || 40;
 
+  if (inst.tabbed) {
+    const p = inst.panels[0];
+    if (p) {
+      if (!b.width) b.width = b.size || 200;
+      if (!b.height) b.height = b.size || 200;
+      b.width = p.ww + PAD;
+      b.height = p.wh + PAD;
+      b.shape = 'square';
+      typeof window.queueRender === 'function' && window.queueRender();
+      if (!_isRestoringCG) typeof window.saveState === 'function' && window.saveState();
+    }
+    return;
+  }
+
 
   // Ensure width/height exist (fresh circular bubbles only have .size)
   if (!b.width) b.width = b.size || 200;
@@ -606,8 +620,10 @@ function _updatePositions() {
             panel.ww = pb.width - GAP * 2;
             panel.wh = pb.height - GAP * 2;
             if (panel.el) {
-              panel.el.style.width = panel.ww + 'px';
-              panel.el.style.height = panel.wh + 'px';
+              const newW = panel.ww + 'px';
+              const newH = panel.wh + 'px';
+              if (panel.el.style.width !== newW) panel.el.style.width = newW;
+              if (panel.el.style.height !== newH) panel.el.style.height = newH;
             }
           }
         }
