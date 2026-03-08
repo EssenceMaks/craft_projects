@@ -751,7 +751,33 @@ function gEnTex(col, sz) { let r = Math.max(4, Math.round(sz)); let k = `e_${col
 function gSymTex(sym, r, col) { let rSz = Math.max(4, Math.round(r)); let k = `s_${sym}_${rSz}_${col}`; if (shTex[k]) return shTex[k]; let tOpt = new PIXI.Text(sym, { fontFamily: 'Segoe UI Emoji, Arial', fontSize: Math.max(12, rSz * 3 + 8), fill: cHex(col) }); let t = app.renderer.generateTexture(tOpt, { resolution: 2 }); tOpt.destroy(true); shTex[k] = t; return t; }
 
 // Math
-function resolveCollisions(mid, vis = new Set()) { let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid); let mw = _bW(mv), mh = _bH(mv); let mcx = mv.x + mw / 2, mcy = mv.y + mh / 2, mr = Math.max(mw, mh) / 2; for (let id in state.bubbles) { if (id === mid) continue; let t = state.bubbles[id]; if (!t) continue; let tw = _bW(t), th = _bH(t); let tcx = t.x + tw / 2, tcy = t.y + th / 2, tr = Math.max(tw, th) / 2, dx = tcx - mcx, dy = tcy - mcy, d = Math.hypot(dx, dy), minD = mr + tr + 20; if (d < minD) { if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); } let a = Math.atan2(dy, dx), p = minD - d; t.x += Math.cos(a) * p; t.y += Math.sin(a) * p; resolveCollisions(id, vis); } } }
+function resolveCollisions(mid, vis = new Set()) {
+    let mv = state.bubbles[mid]; if (!mv || vis.has(mid)) return; vis.add(mid);
+    let mw = _bW(mv), mh = _bH(mv); let mcx = mv.x + mw / 2, mcy = mv.y + mh / 2;
+    for (let id in state.bubbles) {
+        if (id === mid) continue;
+        let t = state.bubbles[id]; if (!t) continue;
+        let tw = _bW(t), th = _bH(t); let tcx = t.x + tw / 2, tcy = t.y + th / 2;
+        let dx = tcx - mcx, dy = tcy - mcy;
+        if (mv.shape === 'circle' && t.shape === 'circle') {
+            let mr = mw / 2, tr = tw / 2, d = Math.hypot(dx, dy), minD = mr + tr + 20;
+            if (d < minD) {
+                if (d === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); }
+                let a = Math.atan2(dy, dx), p = minD - d;
+                t.x += Math.cos(a) * p; t.y += Math.sin(a) * p;
+                resolveCollisions(id, vis);
+            }
+        } else {
+            let minX = (mw / 2) + (tw / 2) + 40, minY = (mh / 2) + (th / 2) + 40;
+            if (Math.abs(dx) < minX && Math.abs(dy) < minY) {
+                if (dx === 0 && dy === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; }
+                let ox = minX - Math.abs(dx), oy = minY - Math.abs(dy);
+                if (ox < oy) t.x += Math.sign(dx) * ox; else t.y += Math.sign(dy) * oy;
+                resolveCollisions(id, vis);
+            }
+        }
+    }
+}
 
 const _bW = b => b.width || b.size;
 const _bH = b => b.height || b.size;

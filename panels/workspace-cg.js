@@ -366,15 +366,27 @@ window.forwardCanvasPan = function (dx, dy) {
 };
 
 window.restoreCGFromState = function () {
-  const st = window.getBubbleState(); if (!st?.cgWindows) return;
+  const st = window.getBubbleState();
+  if (!st?.cgWindows) {
+    Object.keys(_cgW.worlds).forEach(bid => _destroyCGWorld(bid));
+    return;
+  }
+
   _isRestoringCG = true;
+
+  // Cleanup removed CG worlds
+  for (const bid in _cgW.worlds) {
+    if (!st.cgWindows[bid]) _destroyCGWorld(bid);
+  }
+
   for (const bid in st.cgWindows) {
     const layout = st.cgWindows[bid];
-    if (_cgW.worlds[bid]) continue; // already open
-    if (layout.tabbed) {
-      _createCGTabbed(bid);
-    } else {
-      window.createCGWorldForBubble(bid);
+    if (!_cgW.worlds[bid]) {
+      if (layout.tabbed) {
+        _createCGTabbed(bid);
+      } else {
+        window.createCGWorldForBubble(bid);
+      }
     }
     // Apply saved positions/sizes
     const inst = _cgW.worlds[bid]; if (!inst) continue;

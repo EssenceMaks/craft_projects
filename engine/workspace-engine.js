@@ -297,8 +297,6 @@ function _getSnap() {
 function _applySnap(snap) {
   if (!snap?.state) return;
   if (snap.pb) SC.projectBase = snap.pb;
-  // Remove all existing CG iframe panels before loading new state
-  typeof window.destroyAllCGWorlds === 'function' && window.destroyAllCGWorlds();
   window.setBubbleState(snap.state);
   if (snap.camera && window.worldContainer) { window.worldContainer.x = snap.camera.x; window.worldContainer.y = snap.camera.y; window.worldContainer.scale.set(snap.camera.scale); }
   window.fullRebuild && window.fullRebuild();
@@ -395,6 +393,8 @@ window.pushToCenter = async function (customName) {
 };
 window.loadInstance = async function (id) {
   if (!SC.client) return;
+  if (SC.liveMode) stopLiveSession();
+  if (SC.watchMode) _stopWatching();
   const { data } = await SC.client.from('projects').select('data').eq('id', id).single();
   if (!data?.data) { wsToast('Нет данных', 'error'); return; }
   _applySnap(data.data);
@@ -759,6 +759,10 @@ window._confirmNewProject = function () {
   const name = (document.getElementById('new-proj-name')?.value || '').trim().replace(/\s+/g, '_');
   if (!name) { wsToast('Введите название', 'warn'); return; }
   document.getElementById('new-project-modal')?.remove();
+
+  if (SC.liveMode) stopLiveSession();
+  if (SC.watchMode) _stopWatching();
+
   // Destroy CG panels, clear state, set new project base
   typeof window.destroyAllCGWorlds === 'function' && window.destroyAllCGWorlds();
   const blank = { bubbles: {}, minis: {}, links: {}, points: {}, cgData: {}, cgWindows: {} };
