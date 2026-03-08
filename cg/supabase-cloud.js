@@ -941,7 +941,24 @@ function _reattachCursorsLayer() {
 }
 
 // ── Co-editing: canvas broadcast (debounced 150ms) ──────────────
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'cg_remote_update' && e.data.cgData) {
+    applyRemoteCanvas({ items: e.data.cgData.items, connections: e.data.cgData.connections });
+  }
+});
+
 function broadcastCanvasUpdate() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const bubbleId = urlParams.get('bubbleId');
+  if (bubbleId && window.parent && window.parent !== window) {
+    if (SC.broadcastTimer) clearTimeout(SC.broadcastTimer);
+    SC.broadcastTimer = setTimeout(() => {
+      SC.broadcastTimer = null;
+      window.parent.postMessage({ type: 'cg_internal_update', bubbleId, cgData: { items: S.items, connections: S.connections } }, '*');
+    }, 150);
+    return;
+  }
+
   const ch = SC.liveMode ? SC.channel :
     (SC.watchMode && !SC.watchReadOnly ? SC.watchChannel : null);
   if (!ch || !SC.user) return;

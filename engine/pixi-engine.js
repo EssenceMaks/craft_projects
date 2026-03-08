@@ -785,7 +785,7 @@ function getBC(id) { if (state.bubbles[id]) { let b = state.bubbles[id]; let bw 
 
 function getEI(bid, c, tx, ty) { if (!c || !c.rect) return { x: 0, y: 0 }; let dx = tx - c.x, dy = ty - c.y; let isC = state.bubbles[bid] && state.bubbles[bid].shape === 'circle'; if (isC) { let r = c.rect.width / 2, d = Math.hypot(dx, dy); return d === 0 ? { x: c.x, y: c.y } : { x: c.x + (dx / d) * r, y: c.y + (dy / d) * r }; } let w2 = c.rect.width / 2, h2 = c.rect.height / 2, sx = dx ? Math.abs(w2 / dx) : Infinity, sy = dy ? Math.abs(h2 / dy) : Infinity, s = Math.min(sx, sy); return s > 1 ? { x: c.x, y: c.y } : { x: c.x + dx * s, y: c.y + dy * s }; }
 
-function getPC(pId, adj) { let p = state.points[pId]; if (!p) return { x: 0, y: 0 }; if (p.attachedTo) { let c = getBC(p.attachedTo); if (!c) return { x: p.x || 0, y: p.y || 0 }; if (p.angle != null) { let tx = c.x + Math.cos(p.angle) * 1000, ty = c.y + Math.sin(p.angle) * 1000; return getEI(p.attachedTo, c, tx, ty); } if (adj) return getEI(p.attachedTo, c, adj.x, adj.y); return { x: c.x, y: c.y }; } return { x: p.x || 0, y: p.y || 0 }; }
+function getPC(pId, adj) { let p = state.points[pId]; if (!p) return { x: 0, y: 0 }; if (p.attachedTo) { let c = getBC(p.attachedTo); if (!c) return { x: p.x || 0, y: p.y || 0 }; if (p.angle != null) { let tx = c.x + Math.cos(p.angle) * 100000, ty = c.y + Math.sin(p.angle) * 100000; return getEI(p.attachedTo, c, tx, ty); } if (adj) return getEI(p.attachedTo, c, adj.x, adj.y); return { x: c.x, y: c.y }; } return { x: p.x || 0, y: p.y || 0 }; }
 
 function getRaw(pId) { let p = state.points[pId]; if (!p) return { x: 0, y: 0 }; if (p.attachedTo) { let c = getBC(p.attachedTo); return c || { x: 0, y: 0 }; } return { x: p.x || 0, y: p.y || 0 }; }
 
@@ -2394,7 +2394,7 @@ document.addEventListener('mousemove', e => {
         const chk = (id, cx, cy, type, angle, pri) => { let d = Math.hypot(cx - mx, cy - my); if (d < sR) { let sc = d - pri * 1000; if (sc < mS) { mS = sc; sn = { id, type, angle }; } } };
         for (let id in state.bubbles) { let b = state.bubbles[id]; if (b) { let bw = _bW(b), bh = _bH(b); chk(id, b.x + bw / 2, b.y + bh / 2, 'center', null, 1); } }
         for (let id in state.minis) { let c = getBC(id); if (c) chk(id, c.x, c.y, 'center', null, 1); }
-        for (let id in state.bubbles) { let b = state.bubbles[id]; if (!b) continue; let bw = _bW(b), bh = _bH(b); let c = { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; let a = Math.atan2(my - c.y, mx - c.x), ep = getEI(id, c, c.x + Math.cos(a) * 1000, c.y + Math.sin(a) * 1000); chk(id, ep.x, ep.y, 'contour', a, 0); }
+        for (let id in state.bubbles) { let b = state.bubbles[id]; if (!b) continue; let bw = _bW(b), bh = _bH(b); let c = { x: b.x + bw / 2, y: b.y + bh / 2, rect: { width: bw, height: bh } }; let a = Math.atan2(my - c.y, mx - c.x), ep = getEI(id, c, c.x + Math.cos(a) * 100000, c.y + Math.sin(a) * 100000); chk(id, ep.x, ep.y, 'contour', a, 0); }
         for (let id in pxP) { if (id !== pId && pxP[id]) chk(id, pxP[id].g.position.x, pxP[id].g.position.y, 'point', null, 3); }
         dragState.sn = sn;
         if (sn) {

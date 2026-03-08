@@ -217,7 +217,7 @@ function _createCGTabbed(bubbleId) {
 
   // Iframe
   const iframe = document.createElement('iframe');
-  iframe.src = `cg/component-generator.html?tab=1&embed=1&v=${Date.now()}`;
+  iframe.src = `cg/component-generator.html?tab=1&embed=1&bubbleId=${bubbleId}&v=${Date.now()}`;
   iframe.style.cssText = `flex:1;border:none;width:100%;display:block;`;
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals allow-downloads');
 
@@ -642,8 +642,8 @@ function _makeDraggable(hdr, panel) {
     dragging = false; panel.isDragging = false;
     hdr.style.cursor = 'grab';
     hdr.releasePointerCapture(e.pointerId);
-    _expandBubbleForCG(panel.bubbleId);
     _saveCGLayout();
+    _expandBubbleForCG(panel.bubbleId);
   };
   hdr.addEventListener('pointerup', endDrag);
   hdr.addEventListener('pointercancel', endDrag);
@@ -668,8 +668,8 @@ function _makeResizable(resizer, panel, panelEl) {
       resizer.removeEventListener('pointermove', onMove);
       resizer.removeEventListener('pointerup', onUp);
       panel.isDragging = false;
-      _expandBubbleForCG(panel.bubbleId);
       _saveCGLayout();
+      _expandBubbleForCG(panel.bubbleId);
     };
     resizer.addEventListener('pointermove', onMove);
     resizer.addEventListener('pointerup', onUp);
@@ -1373,3 +1373,16 @@ function _cleanCss(css) {
   // Remove position:absolute / left: / top: for standalone display
   return css.replace(/position\s*:\s*absolute\s*;?/g, '').replace(/\b(left|top|right|bottom)\s*:\s*[\d.]+px\s*;?/g, '');
 }
+
+// ── IFRAME INTERNAL SYNC ─────────────────────────────────────────
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'cg_internal_update' && e.data.bubbleId) {
+    const st = window.getBubbleState();
+    if (!st) return;
+    if (!st.cgData) st.cgData = {};
+    st.cgData[e.data.bubbleId] = e.data.cgData;
+    if (typeof window.broadcastCGUpdate === 'function') {
+      window.broadcastCGUpdate(e.data.bubbleId);
+    }
+  }
+});

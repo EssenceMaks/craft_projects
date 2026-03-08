@@ -613,6 +613,14 @@ function _applyCGUpdate({ bubbleId, cgData }) {
   if (!st.cgData) st.cgData = {};
   st.cgData[bubbleId] = cgData;
   if (SC.activeCgBubbleId === bubbleId && typeof cgRenderCanvas === 'function') cgRenderCanvas();
+
+  const inst = window._cgW?.worlds?.[bubbleId];
+  if (inst && inst.panels?.[0]?.el) {
+    const iframe = inst.panels[0].el.querySelector('iframe');
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.postMessage({ type: 'cg_remote_update', cgData }, '*');
+    }
+  }
 }
 
 // ── CURSORS & ONLINE USERS ─────────────────────────────────────
